@@ -32,6 +32,15 @@ inward.
     `SearchChunksService`, which validates `query_vector`/`top_k` and
     delegates similarity search to an injected `VectorStore`, logging
     `top_k` and the returned count (never chunk text or vectors).
+  - `app/application/services/index_document.py` defines
+    `IndexDocumentService`, which composes `LoadDocumentService`,
+    `ChunkDocumentService`, `EmbedChunksService`, and
+    `IndexChunksService` to index one PDF end to end, returning an
+    `IndexDocumentResult` (`document_id`, `source_name`, `page_count`,
+    `chunk_count`, `indexed_count`). It does not catch exceptions raised
+    by any step (fail-fast) and logs only counts and identifiers, never
+    chunk text or vectors. See
+    `docs/adr/0007-indexing-pipeline.md`.
 - **Domain** (`app/domain`): defines entities, value objects, and
   interfaces independent of frameworks. Must not depend on API,
   Application, or Infrastructure, nor on any framework or SDK.
@@ -136,15 +145,18 @@ Domain must never depend on API, Application, or Infrastructure.
 
 Minimal FastAPI setup with a health check endpoint, environment-based
 settings, standard logging, a PDF loading foundation, a text chunking
-foundation, an embedding abstraction foundation (Issue #6), and a
-vector store abstraction foundation (Issue #7). There is no upload API,
-concrete embedding model adapter, concrete vector database adapter,
-retrieval, or generation yet; these land in subsequent issues.
+foundation, an embedding abstraction foundation (Issue #6), a vector
+store abstraction foundation (Issue #7), and an indexing pipeline
+(Issue #8) that composes all of the above end to end. There is no
+upload API, concrete embedding model adapter, concrete vector database
+adapter, retrieval, or generation yet; these land in subsequent
+issues.
 
 See `docs/adr/0001-project-architecture.md`,
 `docs/adr/0002-configuration-and-logging.md`,
 `docs/adr/0003-pdf-extraction-library.md`,
 `docs/adr/0004-text-chunking-strategy.md`,
-`docs/adr/0005-embedding-strategy.md`, and
-`docs/adr/0006-vector-store-strategy.md` for the architecture decision
+`docs/adr/0005-embedding-strategy.md`,
+`docs/adr/0006-vector-store-strategy.md`, and
+`docs/adr/0007-indexing-pipeline.md` for the architecture decision
 records.

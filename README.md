@@ -13,10 +13,11 @@ and current clinical information.
 
 Minimal FastAPI setup with a health check endpoint, environment-based
 settings, standard logging, a PDF loading foundation, a text chunking
-foundation, an embedding foundation (Issue #6), and a vector store
-abstraction foundation (Issue #7). No concrete embedding model,
-concrete vector database, retrieval, or generation logic is
-implemented yet.
+foundation, an embedding foundation (Issue #6), a vector store
+abstraction foundation (Issue #7), and an indexing pipeline that
+composes all of the above end to end (Issue #8). No concrete embedding
+model, concrete vector database, upload API, retrieval, or generation
+logic is implemented yet.
 
 ## Requirements
 
@@ -125,6 +126,26 @@ dependency is added. A deterministic, dependency-free test double,
 available for tests but is not production code. See
 `docs/adr/0006-vector-store-strategy.md` for the reasoning, including
 why `upsert` (not `add`) was chosen and the `score` convention.
+
+## Indexing pipeline
+
+`app.application.services.index_document.IndexDocumentService` indexes
+one PDF end to end by composing `LoadDocumentService`,
+`ChunkDocumentService`, `EmbedChunksService`, and `IndexChunksService`
+in sequence, returning an `IndexDocumentResult` (`document_id`,
+`source_name`, `page_count`, `chunk_count`, `indexed_count`).
+`document_id` is `None` for a zero-page PDF, since no `DocumentPage` is
+produced in that case. Re-indexing the same PDF does not create
+duplicate `VectorStore` entries, since it relies on the existing
+`chunk_id`-based upsert idempotency
+(`docs/adr/0006-vector-store-strategy.md`). Exceptions raised by any
+step (document loading, chunking, embedding, storage) are not caught
+and propagate to the caller unchanged. See
+`docs/adr/0007-indexing-pipeline.md` for the reasoning.
+
+This issue only builds the Application-layer pipeline and its tests;
+there is no upload API yet, and no concrete embedding model or vector
+database adapter.
 
 ## Project layout
 
