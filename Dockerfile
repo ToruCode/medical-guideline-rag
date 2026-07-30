@@ -10,7 +10,4 @@ RUN uv sync --frozen --no-install-project
 COPY app ./app
 RUN uv sync --frozen
 
-# No application entrypoint exists yet (Issue #1: skeleton only).
-# This CMD only verifies that the package imports correctly inside the
-# image and will be replaced once the API entrypoint is implemented.
-CMD ["uv", "run", "python", "-c", "import app; print('medical-guideline-rag skeleton image')"]
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

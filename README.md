@@ -11,8 +11,8 @@ and current clinical information.
 
 ## Status
 
-Initial project structure only (Issue #1). No API endpoints,
-retrieval, or generation logic is implemented yet.
+Minimal FastAPI setup with a health check endpoint (Issue #2). No
+retrieval or generation logic is implemented yet.
 
 ## Requirements
 
@@ -28,12 +28,16 @@ uv sync
 ## Development commands
 
 ```bash
+make dev        # run the API with uvicorn --reload
 make lint       # ruff check
 make format     # ruff format --check
 make typecheck  # mypy
 make test       # pytest
 make check      # lint + typecheck + test
 ```
+
+Once the server is running, open `http://127.0.0.1:8000/docs` for the
+Swagger UI, or call `GET /api/v1/health` directly.
 
 ## Project layout
 
