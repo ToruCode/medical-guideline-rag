@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - ./app:/app/app
+
+  # qdrant and postgres services will be added once the corresponding
+  # infrastructure integrations are implemented (see docs/architecture.md).
