@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
     chunk_size: int = 1000
     chunk_overlap: int = 200
+    # Provisional values only: no infrastructure implementation reads
+    # these yet. A concrete embedder and provider-selection factory are
+    # expected in a follow-up issue (see docs/adr/0005-embedding-strategy.md).
+    embedding_provider: str = "fake"
+    embedding_model_name: str = "intfloat/multilingual-e5-large"
 
 
 @lru_cache

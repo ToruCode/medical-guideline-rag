@@ -12,9 +12,9 @@ and current clinical information.
 ## Status
 
 Minimal FastAPI setup with a health check endpoint, environment-based
-settings, standard logging, a PDF loading foundation, and a text
-chunking foundation (Issue #5). No embedding, retrieval, or generation
-logic is implemented yet.
+settings, standard logging, a PDF loading foundation, a text chunking
+foundation, and an embedding foundation (Issue #6). No concrete
+embedding model, retrieval, or generation logic is implemented yet.
 
 ## Requirements
 
@@ -79,6 +79,26 @@ configured via `MEDICAL_RAG_CHUNK_SIZE` (default 1000) and
 `MEDICAL_RAG_CHUNK_OVERLAP` (default 200). See
 `docs/adr/0004-text-chunking-strategy.md` for the reasoning and
 constraints.
+
+## Embedding
+
+`Chunk`s can be converted into `EmbeddedChunk`s (a `Chunk` plus a
+`vector: list[float]`) via
+`app.application.services.embed_chunks.EmbedChunksService`, which
+delegates the actual vectorization to an injected
+`app.domain.ports.embedder.Embedder` implementation
+(`embed(texts: list[str]) -> list[list[float]]`). Empty input returns
+an empty list without calling the embedder, and mismatched vector
+counts or dimensions raise a domain-level `EmbeddingError` instead of
+producing corrupted data.
+
+This issue only builds the abstraction; no concrete model adapter
+(e.g. sentence-transformers) is implemented yet, and there is no
+VectorDB storage or API endpoint. `Settings.embedding_provider` and
+`Settings.embedding_model_name` are provisional placeholders not yet
+read by any implementation. See
+`docs/adr/0005-embedding-strategy.md` for the reasoning and candidate
+models under consideration for a follow-up issue.
 
 ## Project layout
 
