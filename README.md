@@ -11,8 +11,9 @@ and current clinical information.
 
 ## Status
 
-Minimal FastAPI setup with a health check endpoint (Issue #2). No
-retrieval or generation logic is implemented yet.
+Minimal FastAPI setup with a health check endpoint, environment-based
+settings, and a standard logging setup (Issue #3). No retrieval or
+generation logic is implemented yet.
 
 ## Requirements
 
@@ -23,7 +24,15 @@ retrieval or generation logic is implemented yet.
 
 ```bash
 uv sync
+cp .env.example .env
 ```
+
+Edit `.env` as needed. All settings are environment variables prefixed
+with `MEDICAL_RAG_` (see `app/core/config.py` and `.env.example` for
+the full list). `.env` is not committed to Git.
+
+Future plan: settings will be split per environment (Local / Test /
+Staging / Production) instead of a single `Settings` class.
 
 ## Development commands
 

@@ -20,6 +20,14 @@ inward.
   Qdrant, PostgreSQL, S3).
 - **Core** (`app/core`): application settings, logging, common
   exceptions, security, shared constants.
+  - `app/core/config.py` defines a `Settings` class (pydantic-settings)
+    loaded from environment variables (`MEDICAL_RAG_` prefix) and an
+    optional `.env` file, exposed via a cached `get_settings()`
+    accessor usable as a FastAPI dependency.
+  - `app/core/logging.py` defines `setup_logging(settings)`, which
+    configures the standard library `logging` module via
+    `logging.config.dictConfig`. Modules obtain loggers with
+    `logging.getLogger(__name__)`.
 
 ## Dependency Rule
 
@@ -33,8 +41,10 @@ Domain must never depend on API, Application, or Infrastructure.
 
 ## Status
 
-As of this initial structure (Issue #1), all layers are empty
-skeletons. Concrete implementations land in subsequent issues.
+Minimal FastAPI setup with a health check endpoint, environment-based
+settings, and standard logging (Issue #3). Retrieval, generation, and
+external service integrations land in subsequent issues.
 
-See `docs/adr/0001-project-architecture.md` for the architecture
-decision record.
+See `docs/adr/0001-project-architecture.md` and
+`docs/adr/0002-configuration-and-logging.md` for the architecture
+decision records.
