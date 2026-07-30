@@ -24,6 +24,14 @@ inward.
     `Embedder`, returns an empty list for empty input without calling
     the embedder, and validates that the returned vector count and
     dimensions are consistent before building `EmbeddedChunk`s.
+  - `app/application/services/index_chunks.py` defines
+    `IndexChunksService`, which stores `EmbeddedChunk`s via an injected
+    `VectorStore`, skipping the call entirely for empty input, and logs
+    the stored count (never chunk text or vectors).
+  - `app/application/services/search_chunks.py` defines
+    `SearchChunksService`, which validates `query_vector`/`top_k` and
+    delegates similarity search to an injected `VectorStore`, logging
+    `top_k` and the returned count (never chunk text or vectors).
 - **Domain** (`app/domain`): defines entities, value objects, and
   interfaces independent of frameworks. Must not depend on API,
   Application, or Infrastructure, nor on any framework or SDK.
@@ -37,6 +45,14 @@ inward.
   - `app/domain/models/embedding.py` defines `EmbeddedChunk`, an
     immutable (`frozen=True, slots=True`) dataclass composing a
     `Chunk` with its `vector: list[float]`.
+  - `app/domain/models/chunk.py`'s `Chunk` also exposes a computed
+    `chunk_id` property (`document_id:page_number:chunk_index`), used
+    as a stable identifier for `VectorStore` upsert/deduplication.
+  - `app/domain/models/search_result.py` defines `SearchResult`, an
+    immutable (`frozen=True, slots=True`) dataclass composing an
+    `EmbeddedChunk` with a `score: float`, where a higher score always
+    means a closer match regardless of which `VectorStore`
+    implementation produced it.
   - `app/domain/ports/pdf_loader.py` defines the `PdfLoader` Protocol
     (`load(file_path: Path) -> list[DocumentPage]`) that infrastructure
     PDF loaders implement. The domain layer never imports pypdf.
@@ -48,6 +64,11 @@ inward.
     (`embed(texts: list[str]) -> list[list[float]]`) that infrastructure
     embedding adapters implement. The domain layer never imports
     sentence-transformers, an LLM SDK, or LangChain.
+  - `app/domain/ports/vector_store.py` defines the `VectorStore`
+    Protocol (`upsert(chunks: list[EmbeddedChunk]) -> None`,
+    `search(query_vector: list[float], top_k: int) -> list[SearchResult]`)
+    that infrastructure vector database adapters implement. The domain
+    layer never imports Qdrant, Chroma, FAISS, PostgreSQL, or pgvector.
   - `app/domain/exceptions/document.py` defines
     `DocumentLoadError` and its subtypes
     (`DocumentNotFoundError`, `UnsupportedDocumentTypeError`,
@@ -60,6 +81,10 @@ inward.
     its subtypes (`EmbeddingCountMismatchError`,
     `EmbeddingDimensionMismatchError`) used to translate invalid
     embedder output into domain-level errors.
+  - `app/domain/exceptions/vector_store.py` defines `VectorStoreError`
+    and its subtypes (`InvalidSearchQueryError`, `InvalidTopKError`,
+    `VectorDimensionMismatchError`) used to translate invalid
+    storage/search input into domain-level errors.
 - **Infrastructure** (`app/infrastructure`): implements domain
   interfaces using external libraries (PDF loading, embeddings, LLMs,
   Qdrant, PostgreSQL, S3).
@@ -111,13 +136,15 @@ Domain must never depend on API, Application, or Infrastructure.
 
 Minimal FastAPI setup with a health check endpoint, environment-based
 settings, standard logging, a PDF loading foundation, a text chunking
-foundation, and an embedding abstraction foundation (Issue #6). There
-is no upload API, concrete embedding model adapter, VectorDB storage,
+foundation, an embedding abstraction foundation (Issue #6), and a
+vector store abstraction foundation (Issue #7). There is no upload API,
+concrete embedding model adapter, concrete vector database adapter,
 retrieval, or generation yet; these land in subsequent issues.
 
 See `docs/adr/0001-project-architecture.md`,
 `docs/adr/0002-configuration-and-logging.md`,
 `docs/adr/0003-pdf-extraction-library.md`,
-`docs/adr/0004-text-chunking-strategy.md`, and
-`docs/adr/0005-embedding-strategy.md` for the architecture decision
+`docs/adr/0004-text-chunking-strategy.md`,
+`docs/adr/0005-embedding-strategy.md`, and
+`docs/adr/0006-vector-store-strategy.md` for the architecture decision
 records.

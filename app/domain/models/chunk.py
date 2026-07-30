@@ -19,3 +19,13 @@ class Chunk:
     chunk_index: int
     text: str
     title: str | None
+
+    @property
+    def chunk_id(self) -> str:
+        """A stable identifier for deduplication in a VectorStore.
+
+        Derived from document_id, page_number, and chunk_index rather
+        than stored as a field, so it always stays consistent with
+        those fields and requires no extra construction argument.
+        """
+        return f"{self.document_id}:{self.page_number}:{self.chunk_index}"
