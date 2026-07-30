@@ -12,9 +12,9 @@ and current clinical information.
 ## Status
 
 Minimal FastAPI setup with a health check endpoint, environment-based
-settings, standard logging, and a PDF loading foundation (Issue #4).
-No chunking, embedding, retrieval, or generation logic is implemented
-yet.
+settings, standard logging, a PDF loading foundation, and a text
+chunking foundation (Issue #5). No embedding, retrieval, or generation
+logic is implemented yet.
 
 ## Requirements
 
@@ -63,6 +63,22 @@ There is no upload API yet. Only self-authored, license-free sample
 PDFs belong under `data/sample/` (see `data/sample/README.md`); real
 or copyrighted guideline PDFs must never be committed, and
 `data/raw/` is git-ignored for that reason.
+
+## Text chunking
+
+`DocumentPage`s produced by the PDF loader can be split into
+`Chunk`s for downstream embedding and search via
+`app.infrastructure.chunking.fixed_size_text_splitter.FixedSizeTextSplitter`
+(implements `app.domain.ports.text_splitter.TextSplitter`) together
+with `app.application.services.chunk_document.ChunkDocumentService`,
+which carries `document_id`, `page_number`, `source_name`,
+`source_path`, and `title` from each page into its chunks.
+
+Chunking is character-count based (not LangChain, not token-based) and
+configured via `MEDICAL_RAG_CHUNK_SIZE` (default 1000) and
+`MEDICAL_RAG_CHUNK_OVERLAP` (default 200). See
+`docs/adr/0004-text-chunking-strategy.md` for the reasoning and
+constraints.
 
 ## Project layout
 

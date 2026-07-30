@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     debug: bool = False
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     api_v1_prefix: str = "/api/v1"
+    chunk_size: int = 1000
+    chunk_overlap: int = 200
 
 
 @lru_cache
