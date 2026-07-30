@@ -12,8 +12,9 @@ and current clinical information.
 ## Status
 
 Minimal FastAPI setup with a health check endpoint, environment-based
-settings, and a standard logging setup (Issue #3). No retrieval or
-generation logic is implemented yet.
+settings, standard logging, and a PDF loading foundation (Issue #4).
+No chunking, embedding, retrieval, or generation logic is implemented
+yet.
 
 ## Requirements
 
@@ -47,6 +48,21 @@ make check      # lint + typecheck + test
 
 Once the server is running, open `http://127.0.0.1:8000/docs` for the
 Swagger UI, or call `GET /api/v1/health` directly.
+
+## PDF loading
+
+Text-layer PDFs can be loaded page by page via
+`app.infrastructure.pdf.pypdf_loader.PypdfLoader`, which implements
+the `app.domain.ports.pdf_loader.PdfLoader` interface and returns
+immutable `DocumentPage` values. Scanned PDFs (image-only, no text
+layer) and encrypted PDFs are not supported; see
+`docs/adr/0003-pdf-extraction-library.md` for the reasoning and
+constraints.
+
+There is no upload API yet. Only self-authored, license-free sample
+PDFs belong under `data/sample/` (see `data/sample/README.md`); real
+or copyrighted guideline PDFs must never be committed, and
+`data/raw/` is git-ignored for that reason.
 
 ## Project layout
 
