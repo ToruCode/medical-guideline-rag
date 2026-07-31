@@ -1,143 +1,13 @@
 # Medical Guideline RAG
 
-![Python](https://img.shields.io/badge/Python-3.12-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.116-green)
-![Docker](https://img.shields.io/badge/Docker-Ready-blue)
-![License](https://img.shields.io/badge/License-MIT-yellow)
-![CI](https://github.com/ToruCode/medical-guideline-rag/actions/workflows/ci.yml/badge.svg)
+A citation-grounded RAG system for searching medical guidelines. It
+helps healthcare professionals locate relevant passages from medical
+guideline documents.
 
-A citation-grounded Retrieval-Augmented Generation (RAG) system for searching medical guideline PDFs.
-
----
-
-## Overview
-
-Medical Guideline RAG is a demonstration project that implements a complete Retrieval-Augmented Generation pipeline using modern AI engineering practices.
-
-The system allows users to:
-
-- Upload medical guideline PDFs
-- Build vector indexes
-- Search using semantic similarity
-- Generate grounded answers with GPT-4o-mini
-- Return citations with every answer
-
-This project demonstrates:
-
-- Clean Architecture
-- Domain Driven Design
-- FastAPI
-- Sentence Transformers
-- OpenAI GPT-4o-mini
-- Docker
-- GitHub Actions
-- Architecture Decision Records (ADR)
-
-## Table of Contents
-
-- Overview
-- System Architecture
-- RAG Workflow
-- Tech Stack
-- Features
-- Requirements
-- Setup
-- Docker
-- API
-- Live End-to-End Verification
-- Project Layout
-- License
-
-## System Architecture
-
-```mermaid
-flowchart LR
-
-User([User])
-
-API[FastAPI]
-
-Ask[AskQuestionService]
-
-Retrieve[RetrieveChunksService]
-
-Generate[GenerateAnswerService]
-
-Embed[SentenceTransformer]
-
-Vector[(VectorStore)]
-
-LLM[OpenAI GPT-4o-mini]
-
-Answer([Grounded Answer])
-
-User --> API
-
-API --> Ask
-
-Ask --> Retrieve
-
-Ask --> Generate
-
-Retrieve --> Embed
-
-Retrieve --> Vector
-
-Generate --> LLM
-
-Vector --> Generate
-
-Generate --> Answer
-```
-
-## RAG Workflow
-
-```mermaid
-flowchart TD
-
-A[PDF Upload]
-
-A --> B[PDF Loader]
-
-B --> C[Chunking]
-
-C --> D[SentenceTransformer Embedding]
-
-D --> E[(Vector Store)]
-
-F[User Question]
-
-F --> G[Question Embedding]
-
-G --> H[Similarity Search]
-
-E --> H
-
-H --> I[Top-k Chunks]
-
-I --> J[Prompt Builder]
-
-J --> K[GPT-4o-mini]
-
-K --> L[Grounded Answer with Citations]
-```
-
-## Tech Stack
-
-| Category | Technology |
-|----------|------------|
-| Language | Python 3.12 |
-| Framework | FastAPI |
-| Embedding | Sentence Transformers (intfloat/multilingual-e5-base) |
-| LLM | OpenAI GPT-4o-mini |
-| Vector Store | In-memory Vector Store |
-| API Docs | Swagger UI |
-| Dependency | uv |
-| Testing | pytest |
-| Lint | Ruff |
-| Type Check | mypy |
-| Container | Docker / Docker Compose |
-| CI | GitHub Actions |
+This system is a technical demonstration. It must not be used to
+provide medical diagnoses, individual treatment decisions, or
+patient-specific recommendations. Always confirm the original guideline
+and current clinical information.
 
 ## Features
 
@@ -160,6 +30,25 @@ K --> L[Grounded Answer with Citations]
   decision - see [Project layout](#project-layout).
 - Runnable locally with `uv` or in a container with Docker Compose -
   see [Setup](#setup) and [Docker](#docker).
+
+## Table of Contents
+
+- [Status](#status)
+- [Requirements](#requirements)
+- [Setup](#setup)
+- [Docker](#docker)
+- [Development commands](#development-commands)
+- [PDF loading](#pdf-loading)
+- [Text chunking](#text-chunking)
+- [Embedding](#embedding)
+- [Vector store](#vector-store)
+- [Indexing pipeline](#indexing-pipeline)
+- [Retrieval](#retrieval)
+- [Generation](#generation)
+- [API](#api)
+- [Live end-to-end verification](#live-end-to-end-verification-real-embedding--llm)
+- [Project layout](#project-layout)
+- [License](#license)
 
 ## Status
 
@@ -579,13 +468,3 @@ data/           # raw, processed, and sample guideline data (see data/sample/REA
 ## License
 
 [MIT](LICENSE).
-
-## Author
-
-ToruCode
-
-Clinical Engineer (10 years)
-
-AI Engineer
-
-Medical AI / RAG / Machine Learning
