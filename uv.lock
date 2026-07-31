@@ -484,6 +484,7 @@ dev = [
     { name = "httpx2" },
     { name = "mypy" },
     { name = "pytest" },
+    { name = "python-dotenv" },
     { name = "reportlab" },
     { name = "ruff" },
 ]
@@ -504,6 +505,7 @@ dev = [
     { name = "httpx2" },
     { name = "mypy", specifier = ">=1.11" },
     { name = "pytest", specifier = ">=8.0" },
+    { name = "python-dotenv", specifier = ">=1.0" },
     { name = "reportlab", specifier = ">=5.0.0" },
     { name = "ruff", specifier = ">=0.6" },
 ]

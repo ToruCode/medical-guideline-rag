@@ -271,12 +271,15 @@ store abstraction foundation (Issue #7), an indexing pipeline
 case (Issue #9) that embeds a natural-language query and returns
 similar chunks, a generation use case (Issue #10) that turns retrieved
 chunks into a citation-grounded answer, a FastAPI RAG API (Issue #11)
-exposing document indexing and question answering end to end, and real
+exposing document indexing and question answering end to end, real
 `Embedder`/`Llm` adapters (Issue #12: a local `sentence-transformers`
 model and OpenAI's Chat Completions API), selectable via
 `Settings.embedding_provider`/`llm_provider` alongside the still-default
-Fake implementations. There is no concrete vector database adapter
-(Qdrant/pgvector) yet; that lands in a subsequent issue.
+Fake implementations, and an opt-in live end-to-end test
+(Issue #13, `tests/integration/test_live_rag_e2e.py`) verifying the
+full index-then-ask flow with both real adapters together. There is no
+concrete vector database adapter (Qdrant/pgvector) yet; that lands in a
+subsequent issue.
 
 See `docs/adr/0001-project-architecture.md`,
 `docs/adr/0002-configuration-and-logging.md`,
@@ -287,6 +290,7 @@ See `docs/adr/0001-project-architecture.md`,
 `docs/adr/0007-indexing-pipeline.md`,
 `docs/adr/0008-retrieval-strategy.md`,
 `docs/adr/0009-generation-strategy.md`,
-`docs/adr/0010-fastapi-rag-api.md`, and
-`docs/adr/0011-real-embedding-and-llm-adapters.md` for the architecture
-decision records.
+`docs/adr/0010-fastapi-rag-api.md`,
+`docs/adr/0011-real-embedding-and-llm-adapters.md`, and
+`docs/adr/0012-live-e2e-verification.md` for the architecture decision
+records.

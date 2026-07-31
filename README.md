@@ -19,11 +19,13 @@ all of the above end to end (Issue #8), a retrieval use case
 (Issue #9) that embeds a natural-language query and returns similar
 chunks, a generation use case (Issue #10) that turns retrieved chunks
 into a citation-grounded answer, a FastAPI RAG API (Issue #11) exposing
-document indexing and question answering end to end, and real
+document indexing and question answering end to end, real
 `Embedder`/`Llm` adapters (Issue #12: a local `sentence-transformers`
 model and OpenAI's Chat Completions API), selectable alongside the
-still-default Fake implementations via `Settings`. No concrete vector
-database adapter is implemented yet.
+still-default Fake implementations via `Settings`, and a verified,
+opt-in live end-to-end test of the full stack with both real adapters
+(Issue #13; see [Live end-to-end verification](#live-end-to-end-verification-real-embedding--llm)
+below). No concrete vector database adapter is implemented yet.
 
 ## Requirements
 
@@ -51,6 +53,13 @@ CPU-only). Both remain unused unless you opt in via
 `MEDICAL_RAG_EMBEDDING_PROVIDER=sentence_transformers` and/or
 `MEDICAL_RAG_LLM_PROVIDER=openai` - see [Embedding](#embedding) and
 [Generation](#generation) below.
+
+`tests/conftest.py` loads `.env` automatically (via `python-dotenv`, a
+dev-only dependency) before tests are collected, so filling in
+`.env` alone is enough to enable the opt-in live tests described in
+[Live end-to-end verification](#live-end-to-end-verification-real-embedding--llm)
+below - a real exported shell variable still takes precedence over
+`.env` if both are set.
 
 ## Development commands
 
@@ -269,6 +278,101 @@ There is no concrete vector database adapter yet (`InMemoryVectorStore`
 remains the only `VectorStore`). Swagger UI at `/docs` can exercise
 both endpoints directly, including file upload, regardless of which
 providers are configured.
+
+## Live end-to-end verification (real Embedding + LLM)
+
+This confirms the full PDF-index -> chunk -> embed -> search -> answer
+flow with the real `sentence-transformers` embedder and the real
+OpenAI LLM, not the Fake stand-ins. See
+`docs/adr/0012-live-e2e-verification.md` for the design reasoning.
+
+**1. Required `.env` values** (no new settings beyond what
+[Embedding](#embedding)/[Generation](#generation) already document):
+
+```bash
+MEDICAL_RAG_EMBEDDING_PROVIDER=sentence_transformers
+MEDICAL_RAG_EMBEDDING_MODEL_NAME=intfloat/multilingual-e5-base
+MEDICAL_RAG_LLM_PROVIDER=openai
+MEDICAL_RAG_LLM_API_KEY=sk-...   # never commit a real key
+```
+
+Never commit `.env`, never paste a real API key into a commit, a log
+line, a test assertion, an exception message, or this README. `llm_api_key`
+is a `SecretStr` for exactly this reason (see [Generation](#generation)).
+
+**2. Model download and caching.** The first request that uses
+`sentence_transformers` downloads `intfloat/multilingual-e5-base`
+(a few hundred MB) into the standard Hugging Face cache
+(`~/.cache/huggingface`, or `%USERPROFILE%\.cache\huggingface` on
+Windows; override with the `HF_HOME` environment variable). This can
+take a few minutes on a slow connection; every request afterward
+(including later runs of the app or the live test) reuses the cached
+model and loads in a few seconds.
+
+**3. Query/passage prefixes.** `sentence-transformers` models in the
+`intfloat/multilingual-e5-*` family are asymmetric: the app already
+applies a `"passage: "` prefix when indexing and a `"query: "` prefix
+when searching (`get_passage_embedder`/`get_query_embedder` in
+`app/api/dependencies.py`). There is nothing to configure; this is
+confirmed functionally by the live test finding the right passage for
+a related question, not by inspecting raw vectors.
+
+**4. Vector dimension consistency.** `InMemoryVectorStore` records the
+dimension of the first vector it stores and rejects any later vector of
+a different size (`VectorDimensionMismatchError`). If you switch
+`MEDICAL_RAG_EMBEDDING_MODEL_NAME` to a model with a different
+dimension after already indexing documents, restart the app (or expect
+this error) rather than mixing vectors from two models in the same
+store.
+
+**5. Running the live test:**
+
+```bash
+# .env filled in as above (loaded automatically by tests/conftest.py), or:
+export MEDICAL_RAG_LLM_API_KEY=sk-...
+export RUN_SLOW_TESTS=1
+
+uv run pytest tests/integration/test_live_rag_e2e.py -v
+```
+
+`RUN_SLOW_TESTS=1` opts into the real model download/load;
+`MEDICAL_RAG_LLM_API_KEY` opts into the real, billable OpenAI call. The
+test is skipped unless **both** are present, and never runs as part of
+a plain `uv run pytest`. It generates its own self-authored, obviously
+fictional sample PDF (`tests/support/pdf_factory.build_pdf`) at run
+time - no PDF is committed to this repository - and asserts only on
+status codes, counts, and booleans (`chunk_count`, citation count,
+`page_number`, `is_insufficient_evidence`, and that `answer` is
+non-empty), never on API keys or exact document/answer text.
+
+**6. Manual verification via Swagger UI**, as an alternative to the
+live test:
+
+1. Fill in `.env` as in step 1, then `make dev`.
+2. Open `http://127.0.0.1:8000/docs`.
+3. `POST /documents/index` -> "Try it out" -> upload any self-authored,
+   non-confidential sample PDF (see `data/sample/README.md`; never a
+   real guideline or patient document).
+4. `POST /questions/ask` -> ask a question related to that PDF's
+   content -> check `answer`, `citations` (source name, page number,
+   score), and `is_insufficient_evidence` in the response.
+5. Restarting the server clears `InMemoryVectorStore`
+   ([Vector store](#vector-store)) - step 3 must be repeated after any
+   restart before step 4 will find anything.
+
+**7. Cost, timeout, and download time to expect:** a `gpt-4o-mini` call
+for a short prompt (a handful of retrieved passages plus a question)
+costs a small fraction of a cent; `MEDICAL_RAG_LLM_TIMEOUT_SECONDS`
+(default 30) bounds how long `OpenAiLlm` waits for a response. The
+`sentence-transformers` model download (step 2) is the slowest part of
+a first run and depends entirely on network speed.
+
+**8. Logging in error cases.** Both endpoints already log only counts,
+file names, and outcome flags, never question text, document text, or
+generated answer text ([API](#api)); this holds identically whether
+the Fake or the real providers are configured. An API key is never
+logged (`SecretStr`) and never appears in an `HTTPException` message
+raised by either endpoint.
 
 ## Project layout
 

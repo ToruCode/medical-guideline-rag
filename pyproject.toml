@@ -21,6 +21,7 @@ dev = [
     "mypy>=1.11",
     "httpx2",
     "reportlab>=5.0.0",
+    "python-dotenv>=1.0",
 ]
 
 [build-system]
