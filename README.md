@@ -15,10 +15,13 @@ Minimal FastAPI setup with a health check endpoint, environment-based
 settings, standard logging, a PDF loading foundation, a text chunking
 foundation, an embedding foundation (Issue #6), a vector store
 abstraction foundation (Issue #7), an indexing pipeline that composes
-all of the above end to end (Issue #8), and a retrieval use case
+all of the above end to end (Issue #8), a retrieval use case
 (Issue #9) that embeds a natural-language query and returns similar
-chunks. No concrete embedding model, concrete vector database, upload
-API, search API, or generation logic is implemented yet.
+chunks, and a generation use case (Issue #10) that turns retrieved
+chunks into a citation-grounded answer. No concrete embedding model,
+concrete vector database, concrete LLM adapter, upload API, search API,
+or a use case composing retrieval and generation together is
+implemented yet.
 
 ## Requirements
 
@@ -168,6 +171,35 @@ and the returned result count, never query text or vector values. See
 This issue only builds the Application-layer use case and its tests;
 there is no search API endpoint yet, and no concrete embedding model or
 vector database adapter.
+
+## Generation
+
+`app.application.services.generate_answer.GenerateAnswerService` takes
+a question and an already-retrieved `list[SearchResult]` (from
+`RetrieveChunksService`) and generates a citation-grounded answer by
+delegating to an injected `app.domain.ports.llm.Llm`
+(`generate(prompt: str) -> str`). An empty/whitespace-only question is
+rejected before the `Llm` is called. When `search_results` is empty,
+the `Llm` is never called at all: a fixed insufficient-evidence answer
+is returned instead, so the system can never invent an answer when no
+guideline evidence was retrieved. `GenerationResult` (`answer`,
+`citations: list[SearchResult]`, `is_insufficient_evidence`) reuses
+`SearchResult` rather than introducing a separate citation model.
+Exceptions from the `Llm` are not caught and propagate to the caller
+unchanged. Logging includes only the citation count and the
+insufficient-evidence outcome, never question text, guideline passage
+text, or the generated answer text. See
+`docs/adr/0009-generation-strategy.md` for the reasoning, including the
+current limitation that citations only carry title/source name and
+page number (not edition/chapter/section, which `Chunk` does not yet
+model).
+
+This issue only builds the Application-layer use case, an `Llm`
+abstraction, and a `FakeLlm` test double
+(`tests/support/fake_llm.py`, no network access); there is no concrete
+LLM adapter (e.g. an OpenAI client), no API endpoint, and no use case
+yet composing `RetrieveChunksService` and `GenerateAnswerService`
+together end to end.
 
 ## Project layout
 

@@ -53,6 +53,23 @@ inward.
     returned result count, never query text or vectors. Returns
     `list[SearchResult]` directly; no separate retrieval result model
     is introduced. See `docs/adr/0008-retrieval-strategy.md`.
+  - `app/application/services/generate_answer.py` defines
+    `GenerateAnswerService`, which generates a citation-grounded answer
+    from a `question: str` and an already-retrieved
+    `list[SearchResult]` by delegating to an injected `Llm`. It rejects
+    an empty/whitespace-only `question` (`EmptyQueryError`) before
+    calling the `Llm`, and never calls the `Llm` at all when
+    `search_results` is empty, returning a fixed
+    `INSUFFICIENT_EVIDENCE_ANSWER` with `is_insufficient_evidence=True`
+    instead. The module-level `build_context` function formats
+    `SearchResult`s into a numbered, citable context block. Returns
+    `GenerationResult` (`answer`, `citations: list[SearchResult]`,
+    `is_insufficient_evidence`), kept in the Application layer since no
+    Domain Protocol returns it. Does not catch any exception raised by
+    the `Llm` (fail-fast), and logs only `citation_count` and the
+    insufficient-evidence outcome, never question/context/answer text.
+    No use case yet composes this with `RetrieveChunksService`; see
+    `docs/adr/0009-generation-strategy.md`.
 - **Domain** (`app/domain`): defines entities, value objects, and
   interfaces independent of frameworks. Must not depend on API,
   Application, or Infrastructure, nor on any framework or SDK.
@@ -90,6 +107,10 @@ inward.
     `search(query_vector: list[float], top_k: int) -> list[SearchResult]`)
     that infrastructure vector database adapters implement. The domain
     layer never imports Qdrant, Chroma, FAISS, PostgreSQL, or pgvector.
+  - `app/domain/ports/llm.py` defines the `Llm` Protocol
+    (`generate(prompt: str) -> str`) that infrastructure LLM adapters
+    implement. The domain layer never imports an LLM SDK; the caller
+    is responsible for composing the full prompt string.
   - `app/domain/exceptions/document.py` defines
     `DocumentLoadError` and its subtypes
     (`DocumentNotFoundError`, `UnsupportedDocumentTypeError`,
@@ -164,11 +185,15 @@ Minimal FastAPI setup with a health check endpoint, environment-based
 settings, standard logging, a PDF loading foundation, a text chunking
 foundation, an embedding abstraction foundation (Issue #6), a vector
 store abstraction foundation (Issue #7), an indexing pipeline
-(Issue #8) that composes all of the above end to end, and a retrieval
-use case (Issue #9) that embeds a natural-language query and returns
-similar chunks. There is no upload API, search API, concrete embedding
-model adapter, concrete vector database adapter, or generation yet;
-these land in subsequent issues.
+(Issue #8) that composes all of the above end to end, a retrieval use
+case (Issue #9) that embeds a natural-language query and returns
+similar chunks, and a generation use case (Issue #10) that turns
+retrieved chunks into a citation-grounded answer, or an explicit
+insufficient-evidence result when nothing was retrieved. There is no
+upload API, search API, concrete embedding model adapter, concrete
+vector database adapter, concrete LLM adapter, or a use case composing
+retrieval and generation together yet; these land in subsequent
+issues.
 
 See `docs/adr/0001-project-architecture.md`,
 `docs/adr/0002-configuration-and-logging.md`,
@@ -176,6 +201,7 @@ See `docs/adr/0001-project-architecture.md`,
 `docs/adr/0004-text-chunking-strategy.md`,
 `docs/adr/0005-embedding-strategy.md`,
 `docs/adr/0006-vector-store-strategy.md`,
-`docs/adr/0007-indexing-pipeline.md`, and
-`docs/adr/0008-retrieval-strategy.md` for the architecture decision
+`docs/adr/0007-indexing-pipeline.md`,
+`docs/adr/0008-retrieval-strategy.md`, and
+`docs/adr/0009-generation-strategy.md` for the architecture decision
 records.
