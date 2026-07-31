@@ -1,4 +1,10 @@
 # -----------------------------
+# Version control / CI
+# -----------------------------
+.git/
+.github/
+
+# -----------------------------
 # Python
 # -----------------------------
 __pycache__/
@@ -23,31 +29,31 @@ venv/
 # -----------------------------
 # Environment Variables
 # -----------------------------
+# Only .env.example is meant to be readable inside the image build
+# context; a real .env (with secrets) must never be baked into a layer.
 .env
 .env.*
 !.env.example
 
 # -----------------------------
-# VS Code
+# IDE / OS
 # -----------------------------
 .vscode/
-
-# -----------------------------
-# OS
-# -----------------------------
 .DS_Store
 Thumbs.db
 
 # -----------------------------
-# Project Data
+# Project data and docs (not needed inside the image)
 # -----------------------------
-data/raw/
-data/processed/
-qdrant_storage/
-postgres_data/
-
-# -----------------------------
-# Logs
-# -----------------------------
+data/
+docs/
+tests/
+scripts/
 logs/
 *.log
+
+# -----------------------------
+# Local infra volumes (if ever created alongside the repo)
+# -----------------------------
+qdrant_storage/
+postgres_data/

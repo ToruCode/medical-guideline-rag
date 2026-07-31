@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint (ruff check)
+        run: make lint
+
+      - name: Format check (ruff format --check)
+        run: make format
+
+      - name: Type check (mypy)
+        run: make typecheck
+
+      - name: Test (pytest)
+        run: make test
+        env:
+          # Only the Fake providers run in CI: no MEDICAL_RAG_LLM_API_KEY
+          # and no RUN_SLOW_TESTS are set, so the opt-in live tests
+          # (tests/integration/test_live_*.py) are skipped automatically
+          # rather than making real network calls or requiring secrets.
+          MEDICAL_RAG_EMBEDDING_PROVIDER: fake
+          MEDICAL_RAG_LLM_PROVIDER: fake

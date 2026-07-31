@@ -3,8 +3,19 @@ services:
     build: .
     env_file:
       - .env
+    ports:
+      - "8000:8000"
     volumes:
-      - ./app:/app/app
+      # Persists the sentence-transformers model download
+      # (~/.cache/huggingface inside the container, since the image
+      # runs as root) across container recreation, so
+      # MEDICAL_RAG_EMBEDDING_PROVIDER=sentence_transformers does not
+      # re-download the model every time. Harmless and unused while the
+      # "fake" provider (the default) is configured.
+      - hf_cache:/root/.cache/huggingface
 
   # qdrant and postgres services will be added once the corresponding
   # infrastructure integrations are implemented (see docs/architecture.md).
+
+volumes:
+  hf_cache:

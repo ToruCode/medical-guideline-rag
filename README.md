@@ -9,6 +9,47 @@ provide medical diagnoses, individual treatment decisions, or
 patient-specific recommendations. Always confirm the original guideline
 and current clinical information.
 
+## Features
+
+- Natural-language search over your own PDF guideline documents, with
+  citations (source name, page number, similarity score) attached to
+  every answer.
+- Answers are grounded only in retrieved passages - never invented -
+  with an explicit insufficient-evidence result when nothing relevant
+  was found.
+- Two HTTP endpoints (`POST /documents/index`, `POST /questions/ask`)
+  with interactive Swagger UI docs, built on FastAPI.
+- Runs fully offline out of the box (deterministic Fake embedding/LLM
+  implementations, no API key or network access required), or with a
+  real local `sentence-transformers` embedding model and the real
+  OpenAI API selected via a couple of environment variables - see
+  [Embedding](#embedding), [Generation](#generation), and
+  [Live end-to-end verification](#live-end-to-end-verification-real-embedding--llm).
+- A layered architecture (API / Application / Domain / Infrastructure)
+  with an ADR (`docs/adr/`) recording the reasoning behind every major
+  decision - see [Project layout](#project-layout).
+- Runnable locally with `uv` or in a container with Docker Compose -
+  see [Setup](#setup) and [Docker](#docker).
+
+## Table of Contents
+
+- [Status](#status)
+- [Requirements](#requirements)
+- [Setup](#setup)
+- [Docker](#docker)
+- [Development commands](#development-commands)
+- [PDF loading](#pdf-loading)
+- [Text chunking](#text-chunking)
+- [Embedding](#embedding)
+- [Vector store](#vector-store)
+- [Indexing pipeline](#indexing-pipeline)
+- [Retrieval](#retrieval)
+- [Generation](#generation)
+- [API](#api)
+- [Live end-to-end verification](#live-end-to-end-verification-real-embedding--llm)
+- [Project layout](#project-layout)
+- [License](#license)
+
 ## Status
 
 Minimal FastAPI setup with a health check endpoint, environment-based
@@ -22,15 +63,20 @@ into a citation-grounded answer, a FastAPI RAG API (Issue #11) exposing
 document indexing and question answering end to end, real
 `Embedder`/`Llm` adapters (Issue #12: a local `sentence-transformers`
 model and OpenAI's Chat Completions API), selectable alongside the
-still-default Fake implementations via `Settings`, and a verified,
-opt-in live end-to-end test of the full stack with both real adapters
+still-default Fake implementations via `Settings`, a verified, opt-in
+live end-to-end test of the full stack with both real adapters
 (Issue #13; see [Live end-to-end verification](#live-end-to-end-verification-real-embedding--llm)
-below). No concrete vector database adapter is implemented yet.
+below), and release readiness (Issue #14): a working `Dockerfile`/
+`docker compose` setup (see [Docker](#docker)), an MIT
+[License](#license), and a GitHub Actions CI workflow. No concrete
+vector database adapter is implemented yet.
 
 ## Requirements
 
-- Python 3.12
-- [uv](https://docs.astral.sh/uv/)
+Either:
+
+- Python 3.12 and [uv](https://docs.astral.sh/uv/), or
+- Docker and Docker Compose - see [Docker](#docker) below.
 
 ## Setup
 
@@ -60,6 +106,38 @@ dev-only dependency) before tests are collected, so filling in
 [Live end-to-end verification](#live-end-to-end-verification-real-embedding--llm)
 below - a real exported shell variable still takes precedence over
 `.env` if both are set.
+
+## Docker
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+`docker compose` requires `.env` to already exist (it is passed to the
+container via `env_file`); running it before `cp .env.example .env`
+fails with a missing-file error. Once running, the API is reachable at
+`http://localhost:8000` exactly as with `make dev` - `/docs` for
+Swagger UI, `GET /api/v1/health` directly, etc.
+
+The image (`Dockerfile`) installs `sentence-transformers`/`openai` the
+same as a local `uv sync` (see [Setup](#setup)); by default it still
+runs with the Fake providers, so no model download or API key is
+required just to start the container. If you switch
+`MEDICAL_RAG_EMBEDDING_PROVIDER=sentence_transformers` in `.env`, the
+model downloads on first use into a named volume (`hf_cache`, mounted
+at `/root/.cache/huggingface`), so it is **not** re-downloaded every
+time the container is recreated - only when the volume itself is
+removed (`docker compose down -v`).
+
+`compose.yaml` runs the image as built (no source bind-mount); it is
+meant to run the same thing you would deploy, not as a hot-reload dev
+loop. For local development with auto-reload on file changes, use
+`make dev` (plain `uv`) instead - see
+[Development commands](#development-commands) below. A `HEALTHCHECK`
+in the `Dockerfile` calls `GET /api/v1/health` every 30 seconds;
+`docker ps`/`docker compose ps` reports the container as `healthy` once
+the first check passes.
 
 ## Development commands
 
@@ -386,3 +464,7 @@ docs/           # requirements, architecture, ADRs
 scripts/        # development and operational scripts
 data/           # raw, processed, and sample guideline data (see data/sample/README.md)
 ```
+
+## License
+
+[MIT](LICENSE).
