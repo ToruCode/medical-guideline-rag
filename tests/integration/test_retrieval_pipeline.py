@@ -2,7 +2,7 @@ from app.application.services.retrieve_chunks import RetrieveChunksService
 from app.application.services.search_chunks import SearchChunksService
 from app.domain.models.chunk import Chunk
 from app.domain.models.embedding import EmbeddedChunk
-from tests.support.in_memory_vector_store import InMemoryVectorStore
+from app.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 
 
 class QueryAwareEmbedder:

@@ -17,11 +17,12 @@ foundation, an embedding foundation (Issue #6), a vector store
 abstraction foundation (Issue #7), an indexing pipeline that composes
 all of the above end to end (Issue #8), a retrieval use case
 (Issue #9) that embeds a natural-language query and returns similar
-chunks, and a generation use case (Issue #10) that turns retrieved
-chunks into a citation-grounded answer. No concrete embedding model,
-concrete vector database, concrete LLM adapter, upload API, search API,
-or a use case composing retrieval and generation together is
-implemented yet.
+chunks, a generation use case (Issue #10) that turns retrieved chunks
+into a citation-grounded answer, and a FastAPI RAG API (Issue #11)
+exposing document indexing and question answering end to end using the
+existing Fake embedding/LLM implementations and a shared in-memory
+vector store. No concrete embedding model, concrete vector database, or
+concrete LLM adapter is implemented yet.
 
 ## Requirements
 
@@ -66,10 +67,11 @@ layer) and encrypted PDFs are not supported; see
 `docs/adr/0003-pdf-extraction-library.md` for the reasoning and
 constraints.
 
-There is no upload API yet. Only self-authored, license-free sample
-PDFs belong under `data/sample/` (see `data/sample/README.md`); real
-or copyrighted guideline PDFs must never be committed, and
-`data/raw/` is git-ignored for that reason.
+PDFs can be uploaded via `POST /api/v1/documents/index` (see
+[API](#api) below). Only self-authored, license-free sample PDFs belong
+under `data/sample/` (see `data/sample/README.md`); real or
+copyrighted guideline PDFs must never be committed, and `data/raw/` is
+git-ignored for that reason.
 
 ## Text chunking
 
@@ -99,11 +101,12 @@ an empty list without calling the embedder, and mismatched vector
 counts or dimensions raise a domain-level `EmbeddingError` instead of
 producing corrupted data.
 
-This issue only builds the abstraction; no concrete model adapter
-(e.g. sentence-transformers) is implemented yet, and there is no
-VectorDB storage or API endpoint. `Settings.embedding_provider` and
-`Settings.embedding_model_name` are provisional placeholders not yet
-read by any implementation. See
+No concrete model adapter (e.g. sentence-transformers) is implemented
+yet; the FastAPI app's default wiring uses
+`app.infrastructure.embedding.fake_embedder.FakeEmbedder`, a
+deterministic, dependency-free stand-in (see [API](#api) below).
+`Settings.embedding_provider` and `Settings.embedding_model_name` are
+provisional placeholders not yet read by any implementation. See
 `docs/adr/0005-embedding-strategy.md` for the reasoning and candidate
 models under consideration for a follow-up issue.
 
@@ -123,13 +126,14 @@ implementation's responsibility. `Chunk` exposes a computed `chunk_id`
 property (`document_id:page_number:chunk_index`) used as a stable
 identifier for upsert/deduplication.
 
-This issue only builds the abstraction; no concrete vector database
-adapter (Qdrant, pgvector, Chroma) is implemented yet, and no new
-dependency is added. A deterministic, dependency-free test double,
-`tests/support/in_memory_vector_store.py::InMemoryVectorStore`, is
-available for tests but is not production code. See
-`docs/adr/0006-vector-store-strategy.md` for the reasoning, including
-why `upsert` (not `add`) was chosen and the `score` convention.
+No concrete vector database adapter (Qdrant, pgvector, Chroma) is
+implemented yet. A deterministic, dependency-free implementation,
+`app.infrastructure.vector_store.in_memory_vector_store.InMemoryVectorStore`,
+is used both by tests and as the FastAPI app's default dependency
+wiring (see [API](#api) below); its data does not survive a process
+restart. See `docs/adr/0006-vector-store-strategy.md` for the
+reasoning, including why `upsert` (not `add`) was chosen and the
+`score` convention.
 
 ## Indexing pipeline
 
@@ -148,8 +152,9 @@ and propagate to the caller unchanged. See
 `docs/adr/0007-indexing-pipeline.md` for the reasoning.
 
 This issue only builds the Application-layer pipeline and its tests;
-there is no upload API yet, and no concrete embedding model or vector
-database adapter.
+there is no concrete embedding model or vector database adapter yet
+(the API layer wires it to Fake implementations - see [API](#api)
+below).
 
 ## Retrieval
 
@@ -169,8 +174,8 @@ and the returned result count, never query text or vector values. See
 `docs/adr/0008-retrieval-strategy.md` for the reasoning.
 
 This issue only builds the Application-layer use case and its tests;
-there is no search API endpoint yet, and no concrete embedding model or
-vector database adapter.
+there is no concrete embedding model or vector database adapter yet
+(see [API](#api) below for how it is exposed over HTTP today).
 
 ## Generation
 
@@ -194,12 +199,55 @@ current limitation that citations only carry title/source name and
 page number (not edition/chapter/section, which `Chunk` does not yet
 model).
 
-This issue only builds the Application-layer use case, an `Llm`
-abstraction, and a `FakeLlm` test double
-(`tests/support/fake_llm.py`, no network access); there is no concrete
-LLM adapter (e.g. an OpenAI client), no API endpoint, and no use case
-yet composing `RetrieveChunksService` and `GenerateAnswerService`
-together end to end.
+This issue only builds the Application-layer use case and an `Llm`
+abstraction; there is no concrete LLM adapter (e.g. an OpenAI client)
+yet. The FastAPI app's default wiring uses
+`app.infrastructure.llm.fake_llm.FakeLlm`, a deterministic,
+dependency-free stand-in with no network access (see [API](#api)
+below).
+
+## API
+
+Two endpoints expose the services above over HTTP, prefixed with
+`Settings.api_v1_prefix` (default `/api/v1`):
+
+- **`POST /documents/index`** - `multipart/form-data` upload of a
+  single PDF (`file`). Rejects a non-`.pdf` file name (415) and an
+  empty file (400). The upload is saved under a sanitized version of
+  its own name inside a freshly-created, randomly-named temp
+  directory - never under the raw uploaded name directly, and never in
+  a predictable location - and the whole directory is always removed
+  afterward, whether indexing succeeds or fails. Returns 201 with an
+  `IndexDocumentResponse` (`document_id`, `source_name`, `page_count`,
+  `chunk_count`, `indexed_count`) on success; an encrypted or
+  unparseable PDF returns 422.
+- **`POST /questions/ask`** - JSON body (`question`, `top_k`, default
+  5). Composes `RetrieveChunksService` and `GenerateAnswerService` via
+  the new `app.application.services.ask_question.AskQuestionService`.
+  Returns 200 with an `AskQuestionResponse` (`answer`,
+  `citations: list[CitationSchema]`, `is_insufficient_evidence`) -
+  including when no evidence was retrieved, which is a normal result,
+  not an error. An empty/whitespace-only question or non-positive
+  `top_k` returns 400/422.
+
+`app/api/dependencies.py` is the only module that constructs
+Infrastructure implementations (`FakeEmbedder`, `FakeLlm`,
+`InMemoryVectorStore`) and wires them into Application services;
+endpoint modules never import Infrastructure directly.
+`get_embedder`/`get_vector_store`/`get_llm` are process-wide singletons,
+so a document indexed via `POST /documents/index` is searchable via
+`POST /questions/ask` for the life of the running process (data is
+lost on restart). Neither endpoint logs question text, guideline
+passage text, generated answer text, or embedding vectors - only
+counts, file names, and outcome flags.
+
+This issue adds no real embedding model, LLM, or vector database
+adapter; it wires the existing Fake/in-memory implementations
+(previously under `tests/support/`, now under `app/infrastructure/`
+so they can be imported from application code - see
+`docs/adr/0010-fastapi-rag-api.md`) so the full pipeline is usable end
+to end today. Swagger UI at `/docs` can exercise both endpoints
+directly, including file upload.
 
 ## Project layout
 

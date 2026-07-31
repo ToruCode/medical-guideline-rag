@@ -5,7 +5,7 @@ from app.domain.exceptions.embedding import (
     EmbeddingDimensionMismatchError,
 )
 from app.domain.models.chunk import Chunk
-from tests.support.fake_embedder import FakeEmbedder, FixedVectorsEmbedder
+from app.infrastructure.embedding.fake_embedder import FakeEmbedder, FixedVectorsEmbedder
 
 
 def _make_chunk(chunk_index: int, text: str, page_number: int = 1) -> Chunk:

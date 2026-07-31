@@ -6,7 +6,7 @@ from app.domain.exceptions.vector_store import (
 )
 from app.domain.models.chunk import Chunk
 from app.domain.models.embedding import EmbeddedChunk
-from tests.support.in_memory_vector_store import InMemoryVectorStore
+from app.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 
 
 def _make_chunk(chunk_index: int, page_number: int = 1, document_id: str = "doc-1") -> Chunk:

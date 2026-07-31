@@ -1,7 +1,9 @@
-"""Deterministic test-only Llm implementations.
+"""Deterministic, dependency-free Llm implementations.
 
-Never call a real model or perform network access; used to test
-Llm-dependent code without any external API or credentials.
+Never call a real model or perform network access, and require no API
+key. Used both by tests and by the FastAPI app's default dependency
+wiring (app/api/dependencies.py) as a stand-in until a real LLM adapter
+is implemented; see docs/adr/0009-generation-strategy.md.
 """
 
 

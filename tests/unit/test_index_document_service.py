@@ -14,8 +14,8 @@ from app.domain.exceptions.vector_store import VectorDimensionMismatchError
 from app.domain.models.chunk import Chunk
 from app.domain.models.document import DocumentPage
 from app.domain.models.embedding import EmbeddedChunk
-from tests.support.fake_embedder import FakeEmbedder, FixedVectorsEmbedder
-from tests.support.in_memory_vector_store import InMemoryVectorStore
+from app.infrastructure.embedding.fake_embedder import FakeEmbedder, FixedVectorsEmbedder
+from app.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 
 
 class FakePdfLoader:

@@ -12,7 +12,7 @@ from app.domain.exceptions.retrieval import EmptyQueryError
 from app.domain.models.chunk import Chunk
 from app.domain.models.embedding import EmbeddedChunk
 from app.domain.models.search_result import SearchResult
-from tests.support.fake_llm import FakeLlm, RaisingLlm
+from app.infrastructure.llm.fake_llm import FakeLlm, RaisingLlm
 
 
 def _make_search_result(

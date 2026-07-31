@@ -1,9 +1,11 @@
-"""Deterministic test-only VectorStore implementation.
+"""Deterministic, dependency-free VectorStore implementation.
 
-Never connects to a real vector database; used to test VectorStore-dependent
-code (and the VectorStore Protocol contract itself) without any network
-access or external dependency. Not production code - kept under
-tests/support so no application code can accidentally depend on it.
+Never connects to a real vector database. Storage is a plain
+in-process dict, so data does not survive a process restart and is
+not shared across processes. Used both by tests and by the FastAPI
+app's default dependency wiring (app/api/dependencies.py) as a
+stand-in until a real vector database adapter (Qdrant, pgvector) is
+implemented; see docs/adr/0006-vector-store-strategy.md.
 """
 
 import math

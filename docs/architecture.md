@@ -9,6 +9,36 @@ inward.
   input, calls application use cases, converts results into HTTP
   responses. Must not call Qdrant, PostgreSQL, LangChain, or an LLM
   directly.
+  - `app/api/dependencies.py` is the only module the API layer uses to
+    construct Infrastructure implementations and compose them into
+    Application services; endpoint modules depend only on its provider
+    functions via `Depends(...)`. `get_embedder`/`get_vector_store`/
+    `get_llm` are `@lru_cache` singletons shared across all requests
+    for the life of the process (the same pattern
+    `app/core/config.py::get_settings` already uses), so a document
+    indexed via `POST /documents/index` is searchable via
+    `POST /questions/ask`. See `docs/adr/0010-fastapi-rag-api.md`.
+  - `app/api/v1/endpoints/documents.py` defines
+    `POST /documents/index`: validates the uploaded file's name ends in
+    `.pdf`, rejects an empty file, sanitizes the file name
+    (`_sanitize_filename`, strips path separators/unsafe characters),
+    writes it under that sanitized name inside a freshly-created,
+    randomly-named temp directory (`_save_temp_pdf`), and always
+    removes that directory afterward (`shutil.rmtree` in a `finally`
+    block), whether `IndexDocumentService.execute` succeeds or fails.
+    Domain exceptions are mapped to HTTP status codes in the endpoint
+    itself (415/400/422/500 as appropriate). Logs only the sanitized
+    file name and result counts, never document text.
+  - `app/api/v1/endpoints/questions.py` defines `POST /questions/ask`:
+    delegates to `AskQuestionService`, maps `EmptyQueryError`/
+    `InvalidTopKError` to 400 and `EmbeddingError`/`VectorStoreError` to
+    500, and converts each `SearchResult` citation into a
+    `CitationSchema` that excludes the embedding vector. Logs only
+    `top_k`, `citation_count`, and `is_insufficient_evidence`, never
+    question/passage/answer text.
+  - `app/schemas/document.py` defines `IndexDocumentResponse`;
+    `app/schemas/question.py` defines `AskQuestionRequest`,
+    `CitationSchema`, and `AskQuestionResponse`.
 - **Application** (`app/application`): executes use cases and
   coordinates retrieval, reranking, answerability judgment, and
   generation.
@@ -68,8 +98,13 @@ inward.
     Domain Protocol returns it. Does not catch any exception raised by
     the `Llm` (fail-fast), and logs only `citation_count` and the
     insufficient-evidence outcome, never question/context/answer text.
-    No use case yet composes this with `RetrieveChunksService`; see
-    `docs/adr/0009-generation-strategy.md`.
+    See `docs/adr/0009-generation-strategy.md`.
+  - `app/application/services/ask_question.py` defines
+    `AskQuestionService`, which composes `RetrieveChunksService` and
+    `GenerateAnswerService` to answer a question end to end, returning
+    `GenerationResult` unchanged. Does not catch any exception raised
+    by either step (fail-fast). See
+    `docs/adr/0010-fastapi-rag-api.md`.
 - **Domain** (`app/domain`): defines entities, value objects, and
   interfaces independent of frameworks. Must not depend on API,
   Application, or Infrastructure, nor on any framework or SDK.
@@ -151,6 +186,18 @@ inward.
     `InvalidChunkConfigError` on invalid values. See
     `docs/adr/0004-text-chunking-strategy.md` for the chunking
     strategy and its constraints.
+  - `app/infrastructure/embedding/fake_embedder.py` (`FakeEmbedder`,
+    `FixedVectorsEmbedder`), `app/infrastructure/llm/fake_llm.py`
+    (`FakeLlm`, `RaisingLlm`), and
+    `app/infrastructure/vector_store/in_memory_vector_store.py`
+    (`InMemoryVectorStore`) are deterministic, dependency-free
+    implementations of `Embedder`/`Llm`/`VectorStore` with no network
+    access. They are used both by tests and as the FastAPI app's
+    default dependency wiring (`app/api/dependencies.py`), until real
+    adapters exist. Moved here from `tests/support/` in Issue #11; see
+    `docs/adr/0010-fastapi-rag-api.md` for why (they must be importable
+    from application code shipped in the built package, which
+    `tests/support/` is not).
 - **Core** (`app/core`): application settings, logging, common
   exceptions, security, shared constants.
   - `app/core/config.py` defines a `Settings` class (pydantic-settings)
@@ -187,13 +234,14 @@ foundation, an embedding abstraction foundation (Issue #6), a vector
 store abstraction foundation (Issue #7), an indexing pipeline
 (Issue #8) that composes all of the above end to end, a retrieval use
 case (Issue #9) that embeds a natural-language query and returns
-similar chunks, and a generation use case (Issue #10) that turns
-retrieved chunks into a citation-grounded answer, or an explicit
-insufficient-evidence result when nothing was retrieved. There is no
-upload API, search API, concrete embedding model adapter, concrete
-vector database adapter, concrete LLM adapter, or a use case composing
-retrieval and generation together yet; these land in subsequent
-issues.
+similar chunks, a generation use case (Issue #10) that turns retrieved
+chunks into a citation-grounded answer, and a FastAPI RAG API
+(Issue #11) exposing document indexing (`POST /documents/index`) and
+question answering (`POST /questions/ask`) end to end using the
+existing Fake embedding/LLM implementations and an in-memory vector
+store shared across requests. There is no concrete embedding model
+adapter, concrete vector database adapter, or concrete LLM adapter
+yet; these land in subsequent issues.
 
 See `docs/adr/0001-project-architecture.md`,
 `docs/adr/0002-configuration-and-logging.md`,
@@ -202,6 +250,7 @@ See `docs/adr/0001-project-architecture.md`,
 `docs/adr/0005-embedding-strategy.md`,
 `docs/adr/0006-vector-store-strategy.md`,
 `docs/adr/0007-indexing-pipeline.md`,
-`docs/adr/0008-retrieval-strategy.md`, and
-`docs/adr/0009-generation-strategy.md` for the architecture decision
+`docs/adr/0008-retrieval-strategy.md`,
+`docs/adr/0009-generation-strategy.md`, and
+`docs/adr/0010-fastapi-rag-api.md` for the architecture decision
 records.

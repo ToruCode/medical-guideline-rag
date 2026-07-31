@@ -6,9 +6,9 @@ from app.application.services.index_chunks import IndexChunksService
 from app.application.services.index_document import IndexDocumentService
 from app.application.services.load_document import LoadDocumentService
 from app.infrastructure.chunking.fixed_size_text_splitter import FixedSizeTextSplitter
+from app.infrastructure.embedding.fake_embedder import FakeEmbedder
 from app.infrastructure.pdf.pypdf_loader import PypdfLoader
-from tests.support.fake_embedder import FakeEmbedder
-from tests.support.in_memory_vector_store import InMemoryVectorStore
+from app.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 from tests.support.pdf_factory import build_pdf
 
 

@@ -9,7 +9,7 @@ from app.domain.exceptions.vector_store import InvalidTopKError, VectorStoreErro
 from app.domain.models.chunk import Chunk
 from app.domain.models.embedding import EmbeddedChunk
 from app.domain.models.search_result import SearchResult
-from tests.support.fake_embedder import FakeEmbedder, FixedVectorsEmbedder
+from app.infrastructure.embedding.fake_embedder import FakeEmbedder, FixedVectorsEmbedder
 
 
 class FakeVectorStore:

@@ -1,7 +1,9 @@
-"""Deterministic test-only Embedder implementation.
+"""Deterministic, dependency-free Embedder implementation.
 
-Never loads a real model or performs network access; used to test
-Embedder-dependent code without downloading anything.
+Never loads a real model or performs network access. Used both by
+tests and by the FastAPI app's default dependency wiring
+(app/api/dependencies.py) as a stand-in until a real embedding model
+adapter is implemented; see docs/adr/0005-embedding-strategy.md.
 """
 
 
