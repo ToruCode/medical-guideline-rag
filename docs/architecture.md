@@ -41,6 +41,18 @@ inward.
     by any step (fail-fast) and logs only counts and identifiers, never
     chunk text or vectors. See
     `docs/adr/0007-indexing-pipeline.md`.
+  - `app/application/services/retrieve_chunks.py` defines
+    `RetrieveChunksService`, which composes an injected `Embedder` with
+    an injected `SearchChunksService` to turn a natural-language query
+    into similar chunks: it embeds the query, validates that exactly
+    one vector comes back, and delegates the search itself to
+    `SearchChunksService`. It validates `top_k` and rejects an
+    empty/whitespace-only query before calling the `Embedder`, and does
+    not catch any exception raised by the `Embedder` or
+    `SearchChunksService` (fail-fast). It logs only `top_k` and the
+    returned result count, never query text or vectors. Returns
+    `list[SearchResult]` directly; no separate retrieval result model
+    is introduced. See `docs/adr/0008-retrieval-strategy.md`.
 - **Domain** (`app/domain`): defines entities, value objects, and
   interfaces independent of frameworks. Must not depend on API,
   Application, or Infrastructure, nor on any framework or SDK.
@@ -94,6 +106,11 @@ inward.
     and its subtypes (`InvalidSearchQueryError`, `InvalidTopKError`,
     `VectorDimensionMismatchError`) used to translate invalid
     storage/search input into domain-level errors.
+  - `app/domain/exceptions/retrieval.py` defines `RetrievalError` and
+    its subtype `EmptyQueryError`, raised when a natural-language query
+    is empty or whitespace-only, distinct from
+    `InvalidSearchQueryError` (which concerns an already-embedded
+    `query_vector`, not the raw query string).
 - **Infrastructure** (`app/infrastructure`): implements domain
   interfaces using external libraries (PDF loading, embeddings, LLMs,
   Qdrant, PostgreSQL, S3).
@@ -146,17 +163,19 @@ Domain must never depend on API, Application, or Infrastructure.
 Minimal FastAPI setup with a health check endpoint, environment-based
 settings, standard logging, a PDF loading foundation, a text chunking
 foundation, an embedding abstraction foundation (Issue #6), a vector
-store abstraction foundation (Issue #7), and an indexing pipeline
-(Issue #8) that composes all of the above end to end. There is no
-upload API, concrete embedding model adapter, concrete vector database
-adapter, retrieval, or generation yet; these land in subsequent
-issues.
+store abstraction foundation (Issue #7), an indexing pipeline
+(Issue #8) that composes all of the above end to end, and a retrieval
+use case (Issue #9) that embeds a natural-language query and returns
+similar chunks. There is no upload API, search API, concrete embedding
+model adapter, concrete vector database adapter, or generation yet;
+these land in subsequent issues.
 
 See `docs/adr/0001-project-architecture.md`,
 `docs/adr/0002-configuration-and-logging.md`,
 `docs/adr/0003-pdf-extraction-library.md`,
 `docs/adr/0004-text-chunking-strategy.md`,
 `docs/adr/0005-embedding-strategy.md`,
-`docs/adr/0006-vector-store-strategy.md`, and
-`docs/adr/0007-indexing-pipeline.md` for the architecture decision
+`docs/adr/0006-vector-store-strategy.md`,
+`docs/adr/0007-indexing-pipeline.md`, and
+`docs/adr/0008-retrieval-strategy.md` for the architecture decision
 records.

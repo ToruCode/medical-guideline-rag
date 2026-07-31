@@ -14,10 +14,11 @@ and current clinical information.
 Minimal FastAPI setup with a health check endpoint, environment-based
 settings, standard logging, a PDF loading foundation, a text chunking
 foundation, an embedding foundation (Issue #6), a vector store
-abstraction foundation (Issue #7), and an indexing pipeline that
-composes all of the above end to end (Issue #8). No concrete embedding
-model, concrete vector database, upload API, retrieval, or generation
-logic is implemented yet.
+abstraction foundation (Issue #7), an indexing pipeline that composes
+all of the above end to end (Issue #8), and a retrieval use case
+(Issue #9) that embeds a natural-language query and returns similar
+chunks. No concrete embedding model, concrete vector database, upload
+API, search API, or generation logic is implemented yet.
 
 ## Requirements
 
@@ -146,6 +147,27 @@ and propagate to the caller unchanged. See
 This issue only builds the Application-layer pipeline and its tests;
 there is no upload API yet, and no concrete embedding model or vector
 database adapter.
+
+## Retrieval
+
+`app.application.services.retrieve_chunks.RetrieveChunksService` takes
+a natural-language query string and `top_k`, embeds the query via an
+injected `Embedder`, and delegates the similarity search to an
+injected `app.application.services.search_chunks.SearchChunksService`.
+`top_k` and an empty/whitespace-only query are rejected before the
+`Embedder` is called; a mismatch between the number of vectors the
+`Embedder` returns and the single query it was given raises the
+existing `EmbeddingCountMismatchError`. No new result model is
+introduced: the return value is `list[SearchResult]`, the same type
+`VectorStore.search`/`SearchChunksService.execute` already return.
+Exceptions from the `Embedder` or `SearchChunksService` are not caught
+and propagate to the caller unchanged. Logging includes only `top_k`
+and the returned result count, never query text or vector values. See
+`docs/adr/0008-retrieval-strategy.md` for the reasoning.
+
+This issue only builds the Application-layer use case and its tests;
+there is no search API endpoint yet, and no concrete embedding model or
+vector database adapter.
 
 ## Project layout
 
