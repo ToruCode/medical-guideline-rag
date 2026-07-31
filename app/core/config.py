@@ -3,6 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,11 +31,20 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
     chunk_size: int = 1000
     chunk_overlap: int = 200
-    # Provisional values only: no infrastructure implementation reads
-    # these yet. A concrete embedder and provider-selection factory are
-    # expected in a follow-up issue (see docs/adr/0005-embedding-strategy.md).
-    embedding_provider: str = "fake"
-    embedding_model_name: str = "intfloat/multilingual-e5-large"
+    # "fake" (default, no dependencies) or "sentence_transformers" (local
+    # multilingual model, downloaded on first use). See
+    # docs/adr/0011-real-embedding-and-llm-adapters.md.
+    embedding_provider: Literal["fake", "sentence_transformers"] = "fake"
+    embedding_model_name: str = "intfloat/multilingual-e5-base"
+    # "fake" (default, no dependencies, no network access) or "openai".
+    # llm_api_key is a SecretStr (not str) so that accidentally logging or
+    # printing the Settings object never leaks its value; call
+    # .get_secret_value() to obtain the raw string when constructing an
+    # OpenAiLlm. See docs/adr/0011-real-embedding-and-llm-adapters.md.
+    llm_provider: Literal["fake", "openai"] = "fake"
+    llm_model_name: str = "gpt-4o-mini"
+    llm_api_key: SecretStr | None = None
+    llm_timeout_seconds: float = 30.0
 
 
 @lru_cache

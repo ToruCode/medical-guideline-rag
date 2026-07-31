@@ -12,12 +12,19 @@ inward.
   - `app/api/dependencies.py` is the only module the API layer uses to
     construct Infrastructure implementations and compose them into
     Application services; endpoint modules depend only on its provider
-    functions via `Depends(...)`. `get_embedder`/`get_vector_store`/
-    `get_llm` are `@lru_cache` singletons shared across all requests
-    for the life of the process (the same pattern
-    `app/core/config.py::get_settings` already uses), so a document
-    indexed via `POST /documents/index` is searchable via
-    `POST /questions/ask`. See `docs/adr/0010-fastapi-rag-api.md`.
+    functions via `Depends(...)`. `get_passage_embedder`/
+    `get_query_embedder`/`get_vector_store`/`get_llm` are `@lru_cache`
+    singletons shared across all requests for the life of the process
+    (the same pattern `app/core/config.py::get_settings` already uses),
+    so a document indexed via `POST /documents/index` is searchable via
+    `POST /questions/ask`. Each reads `Settings.embedding_provider`/
+    `llm_provider` to choose between the Fake implementations and the
+    real `sentence-transformers`/OpenAI adapters (see Infrastructure,
+    below); `get_passage_embedder`/`get_query_embedder` share one
+    loaded `SentenceTransformer` model, applying a `"passage: "`/
+    `"query: "` prefix respectively. See
+    `docs/adr/0010-fastapi-rag-api.md` and
+    `docs/adr/0011-real-embedding-and-llm-adapters.md`.
   - `app/api/v1/endpoints/documents.py` defines
     `POST /documents/index`: validates the uploaded file's name ends in
     `.pdf`, rejects an empty file, sanitizes the file name
@@ -26,9 +33,12 @@ inward.
     randomly-named temp directory (`_save_temp_pdf`), and always
     removes that directory afterward (`shutil.rmtree` in a `finally`
     block), whether `IndexDocumentService.execute` succeeds or fails.
-    Domain exceptions are mapped to HTTP status codes in the endpoint
-    itself (415/400/422/500 as appropriate). Logs only the sanitized
-    file name and result counts, never document text.
+    `IndexDocumentService.execute` runs via
+    `starlette.concurrency.run_in_threadpool`, so a real (potentially
+    slow) embedding model call never blocks the event loop. Domain
+    exceptions are mapped to HTTP status codes in the endpoint itself
+    (415/400/422/500 as appropriate). Logs only the sanitized file name
+    and result counts, never document text.
   - `app/api/v1/endpoints/questions.py` defines `POST /questions/ask`:
     delegates to `AskQuestionService`, maps `EmptyQueryError`/
     `InvalidTopKError` to 400 and `EmbeddingError`/`VectorStoreError` to
@@ -193,11 +203,29 @@ inward.
     (`InMemoryVectorStore`) are deterministic, dependency-free
     implementations of `Embedder`/`Llm`/`VectorStore` with no network
     access. They are used both by tests and as the FastAPI app's
-    default dependency wiring (`app/api/dependencies.py`), until real
-    adapters exist. Moved here from `tests/support/` in Issue #11; see
-    `docs/adr/0010-fastapi-rag-api.md` for why (they must be importable
-    from application code shipped in the built package, which
-    `tests/support/` is not).
+    default (`"fake"` provider) dependency wiring
+    (`app/api/dependencies.py`). Moved here from `tests/support/` in
+    Issue #11; see `docs/adr/0010-fastapi-rag-api.md` for why (they
+    must be importable from application code shipped in the built
+    package, which `tests/support/` is not).
+  - `app/infrastructure/embedding/sentence_transformer_embedder.py`
+    defines `SentenceTransformerEmbedder`, implementing `Embedder` over
+    a local `sentence-transformers` model, prepending a configurable
+    `prefix` (`"query: "`/`"passage: "`) to every input text for
+    asymmetric retrieval models. `load_sentence_transformer_model`
+    imports `sentence_transformers` lazily (not at module import time),
+    so merely referencing this module never triggers the real,
+    expensive import unless a model is actually loaded. Selected via
+    `Settings.embedding_provider = "sentence_transformers"`. See
+    `docs/adr/0011-real-embedding-and-llm-adapters.md`.
+  - `app/infrastructure/llm/openai_llm.py` defines `OpenAiLlm`,
+    implementing `Llm` over OpenAI's Chat Completions API
+    (`openai.OpenAI(...).chat.completions.create(...)`), sending the
+    single prompt string as one user message. Imports `openai` lazily
+    inside `__init__` for the same reason as
+    `SentenceTransformerEmbedder`. Selected via
+    `Settings.llm_provider = "openai"`. See
+    `docs/adr/0011-real-embedding-and-llm-adapters.md`.
 - **Core** (`app/core`): application settings, logging, common
   exceptions, security, shared constants.
   - `app/core/config.py` defines a `Settings` class (pydantic-settings)
@@ -210,11 +238,18 @@ inward.
     `logging.getLogger(__name__)`.
   - `Settings.chunk_size` (default 1000) and `Settings.chunk_overlap`
     (default 200) configure `FixedSizeTextSplitter`, in characters.
-  - `Settings.embedding_provider` (default `"fake"`) and
-    `Settings.embedding_model_name` (default
-    `"intfloat/multilingual-e5-large"`) are provisional placeholders;
-    no infrastructure implementation reads them yet. See
-    `docs/adr/0005-embedding-strategy.md`.
+  - `Settings.embedding_provider` (`Literal["fake", "sentence_transformers"]`,
+    default `"fake"`) and `Settings.embedding_model_name` (default
+    `"intfloat/multilingual-e5-base"`) select and configure the
+    `Embedder` implementation `app/api/dependencies.py` constructs. See
+    `docs/adr/0005-embedding-strategy.md` and
+    `docs/adr/0011-real-embedding-and-llm-adapters.md`.
+  - `Settings.llm_provider` (`Literal["fake", "openai"]`, default
+    `"fake"`), `Settings.llm_model_name` (default `"gpt-4o-mini"`),
+    `Settings.llm_api_key` (`SecretStr | None`, never logged even if the
+    whole `Settings` object is), and `Settings.llm_timeout_seconds`
+    (default `30.0`) select and configure the `Llm` implementation. See
+    `docs/adr/0011-real-embedding-and-llm-adapters.md`.
 
 ## Dependency Rule
 
@@ -235,13 +270,13 @@ store abstraction foundation (Issue #7), an indexing pipeline
 (Issue #8) that composes all of the above end to end, a retrieval use
 case (Issue #9) that embeds a natural-language query and returns
 similar chunks, a generation use case (Issue #10) that turns retrieved
-chunks into a citation-grounded answer, and a FastAPI RAG API
-(Issue #11) exposing document indexing (`POST /documents/index`) and
-question answering (`POST /questions/ask`) end to end using the
-existing Fake embedding/LLM implementations and an in-memory vector
-store shared across requests. There is no concrete embedding model
-adapter, concrete vector database adapter, or concrete LLM adapter
-yet; these land in subsequent issues.
+chunks into a citation-grounded answer, a FastAPI RAG API (Issue #11)
+exposing document indexing and question answering end to end, and real
+`Embedder`/`Llm` adapters (Issue #12: a local `sentence-transformers`
+model and OpenAI's Chat Completions API), selectable via
+`Settings.embedding_provider`/`llm_provider` alongside the still-default
+Fake implementations. There is no concrete vector database adapter
+(Qdrant/pgvector) yet; that lands in a subsequent issue.
 
 See `docs/adr/0001-project-architecture.md`,
 `docs/adr/0002-configuration-and-logging.md`,
@@ -251,6 +286,7 @@ See `docs/adr/0001-project-architecture.md`,
 `docs/adr/0006-vector-store-strategy.md`,
 `docs/adr/0007-indexing-pipeline.md`,
 `docs/adr/0008-retrieval-strategy.md`,
-`docs/adr/0009-generation-strategy.md`, and
-`docs/adr/0010-fastapi-rag-api.md` for the architecture decision
-records.
+`docs/adr/0009-generation-strategy.md`,
+`docs/adr/0010-fastapi-rag-api.md`, and
+`docs/adr/0011-real-embedding-and-llm-adapters.md` for the architecture
+decision records.

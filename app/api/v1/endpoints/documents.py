@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from starlette.concurrency import run_in_threadpool
 
 from app.api.dependencies import get_index_document_service
 from app.application.services.index_document import IndexDocumentService
@@ -78,6 +79,10 @@ async def index_document(
     uploaded name never determines *where* the file is written), and the
     whole directory is always removed afterward, whether indexing
     succeeds or fails.
+
+    IndexDocumentService.execute is synchronous and, under a real
+    embedding model, can take a non-trivial amount of time; it runs in a
+    worker thread (run_in_threadpool) so it never blocks this event loop.
     """
     original_filename = _validate_pdf_filename(file.filename)
     sanitized_filename = _sanitize_filename(original_filename)
@@ -90,7 +95,7 @@ async def index_document(
 
     temp_path = _save_temp_pdf(content, sanitized_filename)
     try:
-        result = index_document_service.execute(temp_path)
+        result = await run_in_threadpool(index_document_service.execute, temp_path)
     except EncryptedDocumentError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

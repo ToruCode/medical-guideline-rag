@@ -5,15 +5,23 @@ implementations and compose them into Application services; endpoint
 modules depend only on these provider functions via Depends(...), never
 importing Infrastructure directly.
 
-get_embedder/get_vector_store/get_llm are process-wide singletons (via
-lru_cache), shared across all requests for the life of the process, so
-a document indexed through POST /documents/index is searchable via
-POST /questions/ask. Tests must clear these caches between test
-functions (see tests/conftest.py) to avoid state leaking across tests.
+get_passage_embedder/get_query_embedder/get_vector_store/get_llm are
+process-wide singletons (via lru_cache), shared across all requests for
+the life of the process, so a document indexed through
+POST /documents/index is searchable via POST /questions/ask. Tests must
+clear these caches between test functions (see tests/conftest.py) to
+avoid state leaking across tests.
+
+get_passage_embedder/get_query_embedder/get_llm read Settings by calling
+get_settings() directly rather than declaring it as a Depends(...)
+parameter: Settings is not hashable (it is not frozen), and lru_cache
+requires hashable arguments, so these provider functions stay
+zero-argument. get_settings() is itself cached, so this still reflects
+whatever Settings were current the first time each provider was called.
 """
 
 from functools import lru_cache
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends
 
@@ -34,9 +42,17 @@ from app.domain.ports.text_splitter import TextSplitter
 from app.domain.ports.vector_store import VectorStore
 from app.infrastructure.chunking.fixed_size_text_splitter import FixedSizeTextSplitter
 from app.infrastructure.embedding.fake_embedder import FakeEmbedder
+from app.infrastructure.embedding.sentence_transformer_embedder import (
+    SentenceTransformerEmbedder,
+    load_sentence_transformer_model,
+)
 from app.infrastructure.llm.fake_llm import FakeLlm
+from app.infrastructure.llm.openai_llm import OpenAiLlm
 from app.infrastructure.pdf.pypdf_loader import PypdfLoader
 from app.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 
 def get_pdf_loader() -> PdfLoader:
@@ -50,14 +66,42 @@ def get_text_splitter(settings: Annotated[Settings, Depends(get_settings)]) -> T
 
 
 @lru_cache
-def get_embedder() -> Embedder:
-    """Process-wide FakeEmbedder instance.
-
-    No real embedding model adapter exists yet (see
-    docs/adr/0005-embedding-strategy.md); this wires the existing Fake
-    implementation so the API is usable end to end today.
+def _get_sentence_transformer_model() -> "SentenceTransformer":
+    """Process-wide loaded model, shared by both get_passage_embedder and
+    get_query_embedder so the (large) model weights are loaded once, not
+    once per Embedder instance.
     """
-    return FakeEmbedder()
+    return load_sentence_transformer_model(get_settings().embedding_model_name)
+
+
+def _build_sentence_transformer_backed_embedder(settings: Settings, prefix: str) -> Embedder:
+    if settings.embedding_provider == "fake":
+        return FakeEmbedder()
+    if settings.embedding_provider == "sentence_transformers":
+        return SentenceTransformerEmbedder(_get_sentence_transformer_model(), prefix=prefix)
+    raise ValueError(f"Unknown embedding_provider: {settings.embedding_provider!r}")
+
+
+@lru_cache
+def get_passage_embedder() -> Embedder:
+    """Process-wide Embedder for indexed chunk text (POST /documents/index).
+
+    Uses a "passage: " prefix under the sentence_transformers provider,
+    matching the query:/passage: convention required by asymmetric
+    retrieval models such as intfloat/multilingual-e5-*. See
+    docs/adr/0011-real-embedding-and-llm-adapters.md.
+    """
+    return _build_sentence_transformer_backed_embedder(get_settings(), prefix="passage: ")
+
+
+@lru_cache
+def get_query_embedder() -> Embedder:
+    """Process-wide Embedder for search queries (POST /questions/ask).
+
+    Uses a "query: " prefix under the sentence_transformers provider; see
+    get_passage_embedder and docs/adr/0011-real-embedding-and-llm-adapters.md.
+    """
+    return _build_sentence_transformer_backed_embedder(get_settings(), prefix="query: ")
 
 
 @lru_cache
@@ -72,13 +116,28 @@ def get_vector_store() -> VectorStore:
 
 @lru_cache
 def get_llm() -> Llm:
-    """Process-wide FakeLlm instance.
+    """Process-wide Llm instance, selected by Settings.llm_provider.
 
-    No real LLM adapter exists yet (see
-    docs/adr/0009-generation-strategy.md); this wires the existing Fake
-    implementation so the API is usable end to end today.
+    Raises ValueError at construction time (not on the first request)
+    when llm_provider is "openai" but no API key is configured, so a
+    misconfiguration fails fast and clearly rather than as an opaque
+    authentication error from the OpenAI SDK. See
+    docs/adr/0011-real-embedding-and-llm-adapters.md.
     """
-    return FakeLlm()
+    settings = get_settings()
+    if settings.llm_provider == "fake":
+        return FakeLlm()
+    if settings.llm_provider == "openai":
+        if settings.llm_api_key is None:
+            raise ValueError(
+                "MEDICAL_RAG_LLM_API_KEY must be set when MEDICAL_RAG_LLM_PROVIDER=openai"
+            )
+        return OpenAiLlm(
+            api_key=settings.llm_api_key.get_secret_value(),
+            model=settings.llm_model_name,
+            timeout=settings.llm_timeout_seconds,
+        )
+    raise ValueError(f"Unknown llm_provider: {settings.llm_provider!r}")
 
 
 def get_load_document_service(
@@ -94,7 +153,7 @@ def get_chunk_document_service(
 
 
 def get_embed_chunks_service(
-    embedder: Annotated[Embedder, Depends(get_embedder)],
+    embedder: Annotated[Embedder, Depends(get_passage_embedder)],
 ) -> EmbedChunksService:
     return EmbedChunksService(embedder)
 
@@ -126,7 +185,7 @@ def get_search_chunks_service(
 
 
 def get_retrieve_chunks_service(
-    embedder: Annotated[Embedder, Depends(get_embedder)],
+    embedder: Annotated[Embedder, Depends(get_query_embedder)],
     search_chunks: Annotated[SearchChunksService, Depends(get_search_chunks_service)],
 ) -> RetrieveChunksService:
     return RetrieveChunksService(embedder=embedder, search_chunks=search_chunks)

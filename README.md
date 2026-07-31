@@ -18,11 +18,12 @@ abstraction foundation (Issue #7), an indexing pipeline that composes
 all of the above end to end (Issue #8), a retrieval use case
 (Issue #9) that embeds a natural-language query and returns similar
 chunks, a generation use case (Issue #10) that turns retrieved chunks
-into a citation-grounded answer, and a FastAPI RAG API (Issue #11)
-exposing document indexing and question answering end to end using the
-existing Fake embedding/LLM implementations and a shared in-memory
-vector store. No concrete embedding model, concrete vector database, or
-concrete LLM adapter is implemented yet.
+into a citation-grounded answer, a FastAPI RAG API (Issue #11) exposing
+document indexing and question answering end to end, and real
+`Embedder`/`Llm` adapters (Issue #12: a local `sentence-transformers`
+model and OpenAI's Chat Completions API), selectable alongside the
+still-default Fake implementations via `Settings`. No concrete vector
+database adapter is implemented yet.
 
 ## Requirements
 
@@ -42,6 +43,14 @@ the full list). `.env` is not committed to Git.
 
 Future plan: settings will be split per environment (Local / Test /
 Staging / Production) instead of a single `Settings` class.
+
+`uv sync` installs `sentence-transformers` (and its transitive
+`torch`/`transformers` dependencies) and `openai` regardless of which
+provider is configured; this is a sizeable download (hundreds of MB,
+CPU-only). Both remain unused unless you opt in via
+`MEDICAL_RAG_EMBEDDING_PROVIDER=sentence_transformers` and/or
+`MEDICAL_RAG_LLM_PROVIDER=openai` - see [Embedding](#embedding) and
+[Generation](#generation) below.
 
 ## Development commands
 
@@ -101,14 +110,22 @@ an empty list without calling the embedder, and mismatched vector
 counts or dimensions raise a domain-level `EmbeddingError` instead of
 producing corrupted data.
 
-No concrete model adapter (e.g. sentence-transformers) is implemented
-yet; the FastAPI app's default wiring uses
+By default the FastAPI app uses
 `app.infrastructure.embedding.fake_embedder.FakeEmbedder`, a
-deterministic, dependency-free stand-in (see [API](#api) below).
-`Settings.embedding_provider` and `Settings.embedding_model_name` are
-provisional placeholders not yet read by any implementation. See
-`docs/adr/0005-embedding-strategy.md` for the reasoning and candidate
-models under consideration for a follow-up issue.
+deterministic, dependency-free stand-in with no network access. Setting
+`MEDICAL_RAG_EMBEDDING_PROVIDER=sentence_transformers` switches to
+`app.infrastructure.embedding.sentence_transformer_embedder.SentenceTransformerEmbedder`,
+which runs a local, multilingual `sentence-transformers` model
+(`MEDICAL_RAG_EMBEDDING_MODEL_NAME`, default
+`intfloat/multilingual-e5-base`, downloaded on first use). That model
+family is asymmetric - it needs a `"query: "` prefix for search queries
+and a `"passage: "` prefix for indexed text - so the API layer actually
+constructs two `Embedder`s sharing one loaded model
+(`get_passage_embedder`/`get_query_embedder` in
+`app/api/dependencies.py`), not one. See
+`docs/adr/0005-embedding-strategy.md` for the original abstraction
+decision and `docs/adr/0011-real-embedding-and-llm-adapters.md` for the
+concrete adapter and provider-switching design.
 
 ## Vector store
 
@@ -199,12 +216,17 @@ current limitation that citations only carry title/source name and
 page number (not edition/chapter/section, which `Chunk` does not yet
 model).
 
-This issue only builds the Application-layer use case and an `Llm`
-abstraction; there is no concrete LLM adapter (e.g. an OpenAI client)
-yet. The FastAPI app's default wiring uses
-`app.infrastructure.llm.fake_llm.FakeLlm`, a deterministic,
-dependency-free stand-in with no network access (see [API](#api)
-below).
+By default the FastAPI app uses `app.infrastructure.llm.fake_llm.FakeLlm`,
+a deterministic, dependency-free stand-in with no network access.
+Setting `MEDICAL_RAG_LLM_PROVIDER=openai` (plus a real
+`MEDICAL_RAG_LLM_API_KEY`) switches to
+`app.infrastructure.llm.openai_llm.OpenAiLlm`, which sends the composed
+prompt as a single user message to OpenAI's Chat Completions API
+(`MEDICAL_RAG_LLM_MODEL_NAME`, default `gpt-4o-mini`). `llm_api_key` is
+a `pydantic.SecretStr`, so it never appears in logs even if the whole
+`Settings` object is accidentally printed. See
+`docs/adr/0011-real-embedding-and-llm-adapters.md` for the adapter and
+provider-switching design.
 
 ## API
 
@@ -231,23 +253,22 @@ Two endpoints expose the services above over HTTP, prefixed with
   `top_k` returns 400/422.
 
 `app/api/dependencies.py` is the only module that constructs
-Infrastructure implementations (`FakeEmbedder`, `FakeLlm`,
-`InMemoryVectorStore`) and wires them into Application services;
-endpoint modules never import Infrastructure directly.
-`get_embedder`/`get_vector_store`/`get_llm` are process-wide singletons,
-so a document indexed via `POST /documents/index` is searchable via
+Infrastructure implementations (Fake or real, depending on
+`Settings.embedding_provider`/`llm_provider` - see
+[Embedding](#embedding) and [Generation](#generation) above) and wires
+them into Application services; endpoint modules never import
+Infrastructure directly. `get_passage_embedder`/`get_query_embedder`/
+`get_vector_store`/`get_llm` are process-wide singletons, so a document
+indexed via `POST /documents/index` is searchable via
 `POST /questions/ask` for the life of the running process (data is
 lost on restart). Neither endpoint logs question text, guideline
 passage text, generated answer text, or embedding vectors - only
 counts, file names, and outcome flags.
 
-This issue adds no real embedding model, LLM, or vector database
-adapter; it wires the existing Fake/in-memory implementations
-(previously under `tests/support/`, now under `app/infrastructure/`
-so they can be imported from application code - see
-`docs/adr/0010-fastapi-rag-api.md`) so the full pipeline is usable end
-to end today. Swagger UI at `/docs` can exercise both endpoints
-directly, including file upload.
+There is no concrete vector database adapter yet (`InMemoryVectorStore`
+remains the only `VectorStore`). Swagger UI at `/docs` can exercise
+both endpoints directly, including file upload, regardless of which
+providers are configured.
 
 ## Project layout
 

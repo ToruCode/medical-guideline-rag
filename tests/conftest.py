@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 
 import pytest
-from app.api.dependencies import get_embedder, get_llm, get_vector_store
+from app.api import dependencies
 from app.core.config import get_settings
 
 
@@ -13,16 +13,20 @@ def _clear_settings_cache() -> Iterator[None]:
     get_settings.cache_clear()
 
 
+def _clear_singleton_caches() -> None:
+    dependencies.get_passage_embedder.cache_clear()
+    dependencies.get_query_embedder.cache_clear()
+    dependencies._get_sentence_transformer_model.cache_clear()
+    dependencies.get_vector_store.cache_clear()
+    dependencies.get_llm.cache_clear()
+
+
 @pytest.fixture(autouse=True)
 def _clear_shared_singleton_caches() -> Iterator[None]:
     """Ensure the process-wide Embedder/VectorStore/Llm singletons used by
     the API's dependency providers (app/api/dependencies.py) don't leak
     state between tests.
     """
-    get_embedder.cache_clear()
-    get_vector_store.cache_clear()
-    get_llm.cache_clear()
+    _clear_singleton_caches()
     yield
-    get_embedder.cache_clear()
-    get_vector_store.cache_clear()
-    get_llm.cache_clear()
+    _clear_singleton_caches()
