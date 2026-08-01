@@ -35,7 +35,9 @@ Usage (from the repo root):
 
 Prints a compact comparison table (aggregate only) and a ready-to-review
 Markdown table for docs/chunk-size-comparison.md. Pass --verbose to
-also print each candidate's per-question breakdown (local use only).
+also print each candidate's per-question breakdown, including each
+retrieved chunk's rank/page/chunk_index/score/text_preview (local use
+only).
 """
 
 import argparse
@@ -49,6 +51,7 @@ from scripts.retrieval_baseline_core import (
     evaluate_configuration,
     load_dataset,
     print_case_report,
+    print_verbose_case_results,
     resolve_report_path,
     write_local_report,
 )
@@ -150,7 +153,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Also print each candidate's per-question breakdown (local use only).",
+        help=(
+            "Also print each candidate's per-question breakdown, including each "
+            "retrieved chunk's rank/page/chunk_index/score/text_preview "
+            "(local use only)."
+        ),
     )
     parser.add_argument(
         "--save-report",
@@ -191,6 +198,7 @@ def main() -> None:
         )
         if args.verbose:
             print_case_report(run.case_results)
+            print_verbose_case_results(run.case_results)
         runs.append(run)
 
     _print_comparison_table(runs)

@@ -8,14 +8,23 @@ from app.domain.models.chunk import Chunk
 from app.domain.models.embedding import EmbeddedChunk
 from app.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 from scripts.retrieval_baseline_core import (
+    TEXT_PREVIEW_MAX_CHARS,
+    Aggregate,
     CaseResult,
+    ConfigurationRun,
     DatasetCase,
     DatasetDocument,
+    RankedChunkResult,
+    RunConfig,
     evaluate_case,
     evaluate_configuration,
     load_dataset,
     location_key,
+    print_case_report,
+    print_verbose_case_results,
     summarize,
+    truncate_text,
+    write_local_report,
 )
 from tests.support.pdf_factory import build_pdf
 
@@ -176,6 +185,23 @@ def test_evaluate_case_chunk_granularity_requires_exact_chunk_index() -> None:
     assert result.reciprocal_rank == 0.5
 
 
+def test_evaluate_case_populates_ranked_results_with_rank_page_chunk_score_and_preview() -> None:
+    chunk_a = _make_chunk(1, 0, "chunk a text")
+    chunk_b = _make_chunk(2, 0, "chunk b text")
+    vectors = {"q": [1.0, 0.0], "chunk a text": [1.0, 0.0], "chunk b text": [0.9, 0.1]}
+    service = _build_retrieve_chunks_service(vectors, [chunk_a, chunk_b])
+    case = DatasetCase(question="q", granularity="page", expected_locations=[(1, None)])
+
+    result = evaluate_case(case, service, top_k=5)
+
+    assert [r.rank for r in result.ranked_results] == [1, 2]
+    assert result.ranked_results[0].page_number == 1
+    assert result.ranked_results[0].chunk_index == 0
+    assert result.ranked_results[0].text_preview == "chunk a text"
+    assert isinstance(result.ranked_results[0].score, float)
+    assert result.ranked_results[1].page_number == 2
+
+
 def test_summarize_averages_all_case_scores() -> None:
     results = [
         CaseResult(
@@ -293,3 +319,113 @@ def test_evaluate_configuration_uses_a_fresh_vector_store_per_call(tmp_path: Pat
     assert first_run.config.indexed_chunk_count == 1
     assert second_run.config.indexed_page_count == 3
     assert second_run.config.indexed_chunk_count == 3
+
+
+def test_truncate_text_returns_unchanged_when_at_or_under_max_chars() -> None:
+    exact = "a" * TEXT_PREVIEW_MAX_CHARS
+    short = "short text"
+
+    assert truncate_text(exact) == exact
+    assert truncate_text(short) == short
+
+
+def test_truncate_text_truncates_and_appends_ellipsis_when_over_max_chars() -> None:
+    long_text = "a" * (TEXT_PREVIEW_MAX_CHARS + 1)
+
+    preview = truncate_text(long_text)
+
+    assert preview == "a" * TEXT_PREVIEW_MAX_CHARS + "..."
+    assert preview.endswith("...")
+
+
+def _make_case_result_with_ranked_results() -> CaseResult:
+    return CaseResult(
+        question="dialysis water bacteria limit?",
+        expected=[(3, 0)],
+        ranked_locations=["3:0", "1:0"],
+        recall_at_1=1.0,
+        recall_at_3=1.0,
+        recall_at_5=1.0,
+        reciprocal_rank=1.0,
+        ranked_results=[
+            RankedChunkResult(
+                rank=1, page_number=3, chunk_index=0, score=0.8123, text_preview="water text"
+            ),
+            RankedChunkResult(
+                rank=2, page_number=1, chunk_index=0, score=0.7941, text_preview="other text"
+            ),
+        ],
+    )
+
+
+def test_print_verbose_case_results_prints_rank_page_chunk_score_and_text_preview(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    case_result = _make_case_result_with_ranked_results()
+
+    print_verbose_case_results([case_result])
+
+    output = capsys.readouterr().out
+    assert "Q: dialysis water bacteria limit?" in output
+    assert "rank=1 page=3 chunk=0 score=0.8123" in output
+    assert "text_preview: water text" in output
+    assert "rank=2 page=1 chunk=0 score=0.7941" in output
+    assert "text_preview: other text" in output
+
+
+def test_print_case_report_does_not_show_text_preview_body(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """print_case_report() is the only per-question output shown outside
+    --verbose, so it must never include retrieved chunk body text -
+    only print_verbose_case_results() (called when --verbose is passed)
+    may do that.
+    """
+    case_result = _make_case_result_with_ranked_results()
+
+    print_case_report([case_result])
+
+    output = capsys.readouterr().out
+    assert "text_preview" not in output
+    assert "water text" not in output
+
+
+def test_write_local_report_includes_text_preview_in_saved_json(tmp_path: Path) -> None:
+    case_result = _make_case_result_with_ranked_results()
+    config = RunConfig(
+        chunk_size=500,
+        chunk_overlap=200,
+        top_k=5,
+        embedding_model_name="intfloat/multilingual-e5-base",
+        query_prefix="query: ",
+        passage_prefix="passage: ",
+        case_count=1,
+        indexed_page_count=10,
+        indexed_chunk_count=42,
+        measured_at="2026-08-02",
+    )
+    aggregate = Aggregate(recall_at_1=1.0, recall_at_3=1.0, recall_at_5=1.0, mrr=1.0)
+    run = ConfigurationRun(config=config, case_results=[case_result], aggregate=aggregate)
+    document = DatasetDocument(source_path=Path("data/raw/example.pdf"), label="Guideline A")
+    report_path = tmp_path / "report.json"
+
+    write_local_report(report_path, document, [run])
+
+    saved = json.loads(report_path.read_text(encoding="utf-8"))
+    ranked_results = saved["runs"][0]["cases"][0]["ranked_results"]
+    assert ranked_results == [
+        {
+            "rank": 1,
+            "page_number": 3,
+            "chunk_index": 0,
+            "score": 0.8123,
+            "text_preview": "water text",
+        },
+        {
+            "rank": 2,
+            "page_number": 1,
+            "chunk_index": 0,
+            "score": 0.7941,
+            "text_preview": "other text",
+        },
+    ]
