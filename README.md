@@ -45,6 +45,7 @@ This project demonstrates:
 - Docker
 - API
 - Live End-to-End Verification
+- Retrieval Evaluation
 - Project Layout
 - License
 
@@ -562,6 +563,37 @@ generated answer text ([API](#api)); this holds identically whether
 the Fake or the real providers are configured. An API key is never
 logged (`SecretStr`) and never appears in an `HTTPException` message
 raised by either endpoint.
+
+## Retrieval evaluation
+
+`tests/integration/test_retrieval_evaluation.py` measures retrieval
+quality only (never generation/LLM output, per `docs/requirements.md`'s
+"separate retrieval quality from generation quality") using two
+standard metrics computed in `tests/support/evaluation/metrics.py`:
+**Recall@k** (does a relevant chunk appear anywhere in the top k
+results?) and **MRR** (how high does the first relevant chunk rank,
+averaged over all questions?). It indexes a fixed, self-authored,
+fictional evaluation dataset
+(`tests/support/evaluation/qa_dataset.py`: eight short sentences about
+a made-up drug, each paired with a question and its expected page
+number) with the real `sentence-transformers` embedder, then asserts
+`Recall@3`/`MRR` clear provisional thresholds
+(`MIN_RECALL_AT_3`/`MIN_MRR` in the test file) calibrated against that
+dataset. See `docs/adr/0013-retrieval-evaluation.md` for the full
+design reasoning.
+
+Like the live tests above, it downloads a real model and is skipped
+unless `RUN_SLOW_TESTS=1` is set - no OpenAI API key is needed, since
+no `Llm` is involved:
+
+```bash
+RUN_SLOW_TESTS=1 uv run pytest tests/integration/test_retrieval_evaluation.py -v -s
+```
+
+`-s` prints a per-case report (Recall@k, reciprocal rank, expected vs.
+actual page numbers for every question) alongside the pass/fail
+result, which is what you need to recalibrate
+`MIN_RECALL_AT_3`/`MIN_MRR` after growing `EVALUATION_CASES`.
 
 ## Project layout
 
