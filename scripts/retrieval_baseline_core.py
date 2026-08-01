@@ -16,7 +16,7 @@ reason. See docs/evaluation-dataset-format.md.
 """
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -40,6 +40,25 @@ if TYPE_CHECKING:
 QUERY_PREFIX = "query: "
 PASSAGE_PREFIX = "passage: "
 
+# Max length of a retrieved chunk's text_preview (RankedChunkResult) before
+# truncation, for --verbose terminal output and --save-report JSON. Deliberately
+# separate from CITATION_TEXT_PREVIEW_MAX_CHARS (app/core/constants.py): this
+# tooling is for debugging retrieval quality locally, not an API response, so it
+# is implemented independently of app/api/v1/endpoints/questions.py rather than
+# importing from the API layer.
+TEXT_PREVIEW_MAX_CHARS = 300
+
+
+def truncate_text(text: str, max_chars: int = TEXT_PREVIEW_MAX_CHARS) -> str:
+    """Truncates text to at most max_chars, appending "..." when cut.
+
+    The returned string's own length can exceed max_chars by the length of
+    the "..." marker; callers relying on a hard cap should account for that.
+    """
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "..."
+
 
 @dataclass(frozen=True, slots=True)
 class DatasetDocument:
@@ -55,6 +74,20 @@ class DatasetCase:
 
 
 @dataclass(frozen=True, slots=True)
+class RankedChunkResult:
+    """One retrieved chunk for a single question, for --verbose terminal
+    output and --save-report JSON only - not used in Recall/MRR computation
+    (see CaseResult.ranked_locations for that).
+    """
+
+    rank: int
+    page_number: int
+    chunk_index: int
+    score: float
+    text_preview: str
+
+
+@dataclass(frozen=True, slots=True)
 class CaseResult:
     question: str
     expected: list[tuple[int, int | None]]
@@ -63,6 +96,7 @@ class CaseResult:
     recall_at_3: float
     recall_at_5: float
     reciprocal_rank: float
+    ranked_results: list[RankedChunkResult] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +188,16 @@ def evaluate_case(
             location_key(result.embedded_chunk.chunk.page_number, None) for result in results
         ]
     relevant_ids = {location_key(page, idx) for page, idx in case.expected_locations}
+    ranked_results = [
+        RankedChunkResult(
+            rank=rank,
+            page_number=result.embedded_chunk.chunk.page_number,
+            chunk_index=result.embedded_chunk.chunk.chunk_index,
+            score=result.score,
+            text_preview=truncate_text(result.embedded_chunk.chunk.text),
+        )
+        for rank, result in enumerate(results, start=1)
+    ]
 
     return CaseResult(
         question=case.question,
@@ -163,6 +207,7 @@ def evaluate_case(
         recall_at_3=recall_at_k(ranked_ids, relevant_ids, k=3),
         recall_at_5=recall_at_k(ranked_ids, relevant_ids, k=5),
         reciprocal_rank=reciprocal_rank(ranked_ids, relevant_ids),
+        ranked_results=ranked_results,
     )
 
 
@@ -243,6 +288,25 @@ def print_case_report(case_results: list[CaseResult]) -> None:
         print(f"        Q: {case_result.question}")
 
 
+def print_verbose_case_results(case_results: list[CaseResult]) -> None:
+    """Prints each question's retrieved chunks (rank/page/chunk/score and a
+    text_preview), for --verbose only (local use only - never paste this
+    section anywhere committed; it may contain guideline-derived content).
+    """
+    print(
+        "\nPer-question retrieved chunks (local only - never paste this "
+        "section anywhere committed):"
+    )
+    for index, case_result in enumerate(case_results, start=1):
+        print(f"\n[{index}] Q: {case_result.question}")
+        for ranked in case_result.ranked_results:
+            print(
+                f"  rank={ranked.rank} page={ranked.page_number} "
+                f"chunk={ranked.chunk_index} score={ranked.score:.4f}"
+            )
+            print(f"  text_preview: {ranked.text_preview}")
+
+
 def print_aggregate_report(aggregate: Aggregate, config: RunConfig) -> None:
     print("\nAggregate:")
     print(
@@ -312,6 +376,7 @@ def write_local_report(path: Path, document: DatasetDocument, runs: list[Configu
                         "recall_at_3": case_result.recall_at_3,
                         "recall_at_5": case_result.recall_at_5,
                         "reciprocal_rank": case_result.reciprocal_rank,
+                        "ranked_results": [asdict(ranked) for ranked in case_result.ranked_results],
                     }
                     for case_result in run.case_results
                 ],

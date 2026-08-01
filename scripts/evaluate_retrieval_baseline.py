@@ -38,7 +38,8 @@ Prints a per-question breakdown (local use only), an aggregate
 summary, and a ready-to-review Markdown snippet for
 docs/baseline-retrieval-evaluation.md (aggregate numbers and
 measurement configuration only - review it for anything identifying
-before pasting).
+before pasting). Pass --verbose to also print each retrieved chunk's
+rank/page/chunk_index/score/text_preview per question (local use only).
 """
 
 import argparse
@@ -54,6 +55,7 @@ from scripts.retrieval_baseline_core import (
     print_aggregate_report,
     print_case_report,
     print_markdown_snippet,
+    print_verbose_case_results,
     resolve_report_path,
     write_local_report,
 )
@@ -71,6 +73,14 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--top-k", type=int, default=5, help="Retrieval depth; must be >= 5 (default: 5)."
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "Also print each retrieved chunk's rank/page/chunk_index/score/"
+            "text_preview per question (local use only)."
+        ),
     )
     parser.add_argument(
         "--save-report",
@@ -115,6 +125,8 @@ def main() -> None:
     )
 
     print_case_report(run.case_results)
+    if args.verbose:
+        print_verbose_case_results(run.case_results)
     print_aggregate_report(run.aggregate, run.config)
     print_markdown_snippet(document.label, run.aggregate, run.config)
 
