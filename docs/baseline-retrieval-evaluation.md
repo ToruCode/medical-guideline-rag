@@ -5,7 +5,9 @@ Aggregate Recall@k/MRR measurements from
 guideline documents kept entirely locally. See
 `docs/evaluation-dataset-format.md` for the dataset format and
 `docs/adr/0014-real-data-retrieval-baseline.md` for the full design
-reasoning.
+reasoning. For a comparison across several `chunk_size` values instead
+of a single configuration, see
+`docs/chunk-size-comparison.md`/`scripts/compare_chunk_sizes.py`.
 
 Only aggregate numbers and measurement configuration are recorded
 here. Document titles/publishers are anonymized (e.g. `"Guideline

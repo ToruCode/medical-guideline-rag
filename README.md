@@ -47,6 +47,7 @@ This project demonstrates:
 - Live End-to-End Verification
 - Retrieval Evaluation
 - Real-Data Retrieval Baseline
+- Chunk Size Comparison
 - Project Layout
 - License
 
@@ -622,6 +623,34 @@ The script prints a per-question breakdown (local use only), an
 aggregate summary, and a ready-to-review Markdown snippet for
 `docs/baseline-retrieval-evaluation.md` - review it for anything
 identifying before pasting it anywhere committed.
+
+## Chunk size comparison
+
+`scripts/compare_chunk_sizes.py` extends the same idea to compare
+Recall@1/Recall@3/Recall@5/MRR across several `chunk_size` values
+(default `300,500,700,1000,1500`) against the same real, local
+dataset - `chunk_overlap`, `top_k`, and the embedding model are held
+fixed. It shares its core index-and-evaluate logic with
+`scripts/evaluate_retrieval_baseline.py` via
+`scripts/retrieval_baseline_core.py`, but always uses an explicit,
+CLI-specified configuration rather than reading `chunk_size` from
+`.env` - this is a comparison measurement, not a change to any
+default. As with the baseline tool, the real PDF, dataset, and
+per-question results are **never committed**; only the tool and a
+place to record **aggregate** comparison results
+(`docs/chunk-size-comparison.md`, document titles anonymized) are. See
+`docs/adr/0015-chunk-size-comparison.md` for the full design
+reasoning.
+
+```bash
+uv run python -m scripts.compare_chunk_sizes \
+  --dataset data/eval/my_guideline_qa.json --save-report
+```
+
+Prints a comparison table (aggregate only, by default) and a
+ready-to-review Markdown table for `docs/chunk-size-comparison.md`.
+Pass `--verbose` to also print each candidate's per-question
+breakdown (local use only).
 
 ## Project layout
 
