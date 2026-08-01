@@ -46,6 +46,7 @@ This project demonstrates:
 - API
 - Live End-to-End Verification
 - Retrieval Evaluation
+- Real-Data Retrieval Baseline
 - Project Layout
 - License
 
@@ -594,6 +595,33 @@ RUN_SLOW_TESTS=1 uv run pytest tests/integration/test_retrieval_evaluation.py -v
 actual page numbers for every question) alongside the pass/fail
 result, which is what you need to recalibrate
 `MIN_RECALL_AT_3`/`MIN_MRR` after growing `EVALUATION_CASES`.
+
+## Real-data retrieval baseline
+
+`scripts/evaluate_retrieval_baseline.py` measures Recall@1/Recall@3/
+Recall@5/MRR of the current retrieval configuration against a real
+guideline document kept entirely on your own machine - a one-off
+baseline measurement, not a CI gate, and not an improvement (Issue
+#18 is measurement only). The real PDF, the dataset of questions and
+expected pages/chunks, and any per-question results are **never
+committed**: `data/eval/` (alongside the existing `data/raw/`) is
+gitignored for exactly this reason. Only the measurement tool itself,
+the dataset format (`docs/evaluation-dataset-format.md`, fictional
+examples only), and a place to record **aggregate** numbers
+(`docs/baseline-retrieval-evaluation.md`, document titles anonymized)
+are committed. See `docs/adr/0014-real-data-retrieval-baseline.md`
+for the full design reasoning.
+
+```bash
+# .env: MEDICAL_RAG_EMBEDDING_PROVIDER=sentence_transformers
+uv run python -m scripts.evaluate_retrieval_baseline \
+  --dataset data/eval/my_guideline_qa.json --save-report
+```
+
+The script prints a per-question breakdown (local use only), an
+aggregate summary, and a ready-to-review Markdown snippet for
+`docs/baseline-retrieval-evaluation.md` - review it for anything
+identifying before pasting it anywhere committed.
 
 ## Project layout
 

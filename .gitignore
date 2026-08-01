@@ -43,6 +43,11 @@ Thumbs.db
 # -----------------------------
 data/raw/
 data/processed/
+# Local retrieval-evaluation datasets/results derived from real
+# guideline documents (questions, expected pages/chunks, per-question
+# reports). Never commit these - see docs/evaluation-dataset-format.md
+# and docs/adr/0014-real-data-retrieval-baseline.md.
+data/eval/
 qdrant_storage/
 postgres_data/
 
