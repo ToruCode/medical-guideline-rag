@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.dependencies import get_ask_question_service
 from app.application.services.ask_question import AskQuestionService
+from app.core.constants import CITATION_TEXT_PREVIEW_MAX_CHARS
 from app.domain.exceptions.embedding import EmbeddingError
 from app.domain.exceptions.retrieval import EmptyQueryError
 from app.domain.exceptions.vector_store import InvalidTopKError, VectorStoreError
@@ -18,6 +19,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _truncate_text(text: str, max_chars: int) -> str:
+    """Truncates text to at most max_chars, appending "..." when cut.
+
+    The returned string's own length can exceed max_chars by the
+    length of the "..." marker; callers relying on a hard byte/char
+    cap should account for that.
+    """
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "..."
+
+
 def _to_citation_schema(result: SearchResult) -> CitationSchema:
     chunk = result.embedded_chunk.chunk
     return CitationSchema(
@@ -27,6 +40,7 @@ def _to_citation_schema(result: SearchResult) -> CitationSchema:
         page_number=chunk.page_number,
         chunk_index=chunk.chunk_index,
         score=result.score,
+        text_preview=_truncate_text(chunk.text, CITATION_TEXT_PREVIEW_MAX_CHARS),
     )
 
 

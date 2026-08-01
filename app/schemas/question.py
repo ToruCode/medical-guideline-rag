@@ -20,6 +20,14 @@ class CitationSchema(BaseModel):
 
     Deliberately excludes the embedding vector: callers of this API
     never need it, and it must not be exposed over HTTP.
+
+    chunk_index and text_preview exist to let callers debug retrieval
+    quality (e.g. confirm which chunk of a page actually matched, and
+    a preview of what it contains) without querying the VectorStore
+    directly. text_preview is truncated
+    (CITATION_TEXT_PREVIEW_MAX_CHARS in app.core.constants) rather than
+    the full chunk text, so this debug field cannot become a channel
+    for leaking long passages of guideline text over HTTP.
     """
 
     document_id: str
@@ -28,6 +36,7 @@ class CitationSchema(BaseModel):
     page_number: int
     chunk_index: int
     score: float
+    text_preview: str
 
 
 class AskQuestionResponse(BaseModel):

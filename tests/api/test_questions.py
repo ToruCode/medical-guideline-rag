@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from app.core.constants import CITATION_TEXT_PREVIEW_MAX_CHARS
 from app.main import app
 from fastapi.testclient import TestClient
 from tests.support.pdf_factory import build_pdf
@@ -32,6 +33,24 @@ def test_ask_question_with_indexed_content_returns_citations(tmp_path: Path) -> 
     citation = body["citations"][0]
     assert citation["source_name"] == "guideline.pdf"
     assert "vector" not in citation
+    assert citation["chunk_index"] == 0
+    assert citation["text_preview"] == "recommended dosage guidance"
+
+
+def test_ask_question_citation_truncates_long_text_preview(tmp_path: Path) -> None:
+    long_text = "dosage guidance " * 20  # exceeds CITATION_TEXT_PREVIEW_MAX_CHARS, one chunk
+    _index_sample_document(tmp_path, text=long_text)
+
+    response = client.post(
+        "/api/v1/questions/ask", json={"question": "dosage guidance", "top_k": 3}
+    )
+
+    assert response.status_code == 200
+    citation = response.json()["citations"][0]
+    preview = citation["text_preview"]
+    assert preview.endswith("...")
+    assert len(preview) == CITATION_TEXT_PREVIEW_MAX_CHARS + len("...")
+    assert preview[: -len("...")] == long_text[:CITATION_TEXT_PREVIEW_MAX_CHARS]
 
 
 def test_ask_question_with_no_indexed_content_returns_insufficient_evidence() -> None:
