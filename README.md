@@ -652,6 +652,39 @@ ready-to-review Markdown table for `docs/chunk-size-comparison.md`.
 Pass `--verbose` to also print each candidate's per-question
 breakdown (local use only).
 
+## PDF extraction comparison
+
+`scripts/compare_pdf_extractors.py` compares PDF text-extraction
+strategies (`pypdf`, PyMuPDF) against the same real, local dataset:
+for each extractor, it measures extraction-quality statistics (page/
+character counts, a comparison-only garbled-text heuristic - see
+`docs/adr/0017-pdf-extraction-comparison-tooling.md` for what it does
+and does not detect) alongside Recall@1/Recall@3/Recall@5/MRR under a
+fixed configuration (`chunk_size=1000`, `chunk_overlap=200`,
+`top_k=5`, `intfloat/multilingual-e5-base`). It reuses
+`scripts/retrieval_baseline_core.py`'s retrieval evaluation, injecting
+each extractor's already-extracted pages instead of always using
+`pypdf`. This is a comparison measurement only - production PDF
+extraction (`app/api/dependencies.py`) still uses `pypdf` only. As with
+the other tools above, the real PDF, dataset, and per-question results
+are **never committed**; only the tool and a place to record
+**aggregate** comparison results
+(`docs/pdf-extraction-comparison-results.md`, document titles
+anonymized) are. See
+`docs/adr/0016-retrieval-quality-diagnosis.md`/
+`docs/adr/0017-pdf-extraction-comparison-tooling.md` for the full
+design reasoning.
+
+```bash
+uv run python -m scripts.compare_pdf_extractors \
+  --dataset data/eval/my_guideline_qa.json --save-report
+```
+
+Prints a comparison table (aggregate only, by default) and a
+ready-to-review Markdown table for
+`docs/pdf-extraction-comparison-results.md`. Pass `--verbose` to also
+print each extractor's per-question breakdown (local use only).
+
 ## Project layout
 
 See `docs/architecture.md` for the layered architecture and

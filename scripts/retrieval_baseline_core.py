@@ -28,6 +28,7 @@ from app.application.services.index_document import IndexDocumentService
 from app.application.services.load_document import LoadDocumentService
 from app.application.services.retrieve_chunks import RetrieveChunksService
 from app.application.services.search_chunks import SearchChunksService
+from app.domain.ports.pdf_loader import PdfLoader
 from app.infrastructure.chunking.fixed_size_text_splitter import FixedSizeTextSplitter
 from app.infrastructure.embedding.sentence_transformer_embedder import SentenceTransformerEmbedder
 from app.infrastructure.pdf.pypdf_loader import PypdfLoader
@@ -229,12 +230,18 @@ def evaluate_configuration(
     chunk_overlap: int,
     top_k: int,
     embedding_model_name: str,
+    pdf_loader: PdfLoader | None = None,
 ) -> ConfigurationRun:
     """Indexes document.source_path at the given chunk_size/chunk_overlap
     using model (already loaded - loading it is the expensive part, so
     callers comparing several configurations load it once and pass it
     to every evaluate_configuration() call), then runs every case in
     cases through RetrieveChunksService at the given top_k.
+
+    pdf_loader defaults to PypdfLoader() (the production extractor).
+    Passing a different PdfLoader-compatible implementation is what
+    scripts/pdf_extraction_comparison_core.py (Issue #22) uses to
+    compare extraction strategies under the same retrieval evaluation.
 
     Builds a fresh InMemoryVectorStore each call, so results from one
     configuration never leak into another.
@@ -244,7 +251,7 @@ def evaluate_configuration(
     vector_store = InMemoryVectorStore()
 
     index_document = IndexDocumentService(
-        load_document=LoadDocumentService(PypdfLoader()),
+        load_document=LoadDocumentService(pdf_loader if pdf_loader is not None else PypdfLoader()),
         chunk_document=ChunkDocumentService(
             FixedSizeTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         ),
