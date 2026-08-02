@@ -1,12 +1,15 @@
 # Retrieval evaluation dataset format (real documents)
 
 This describes the JSON format used to measure retrieval quality
-(Recall@1/3/5, MRR) against a real guideline document, shared by both
-`scripts/evaluate_retrieval_baseline.py` (a single configuration) and
-`scripts/compare_chunk_sizes.py` (several `chunk_size` values against
-the same dataset). See `docs/adr/0014-real-data-retrieval-baseline.md`
-and `docs/adr/0015-chunk-size-comparison.md` for the reasoning behind
-this design.
+(Recall@1/3/5, MRR) against a real guideline document, shared by
+`scripts/evaluate_retrieval_baseline.py` (a single configuration),
+`scripts/compare_chunk_sizes.py` (several `chunk_size` values), and
+`scripts/compare_pdf_extractors.py` (several PDF text-extraction
+strategies) against the same dataset. See
+`docs/adr/0014-real-data-retrieval-baseline.md`,
+`docs/adr/0015-chunk-size-comparison.md`, and
+`docs/adr/0017-pdf-extraction-comparison-tooling.md` for the reasoning
+behind this design.
 
 **Never commit an actual dataset file.** `data/eval/` is gitignored for
 exactly this reason: a real dataset's questions and expected
