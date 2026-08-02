@@ -11,10 +11,13 @@ from typing import Any
 
 import pytest
 from app.api import dependencies
+from app.core.config import get_settings
 from app.infrastructure.embedding.fake_embedder import FakeEmbedder
 from app.infrastructure.embedding.sentence_transformer_embedder import SentenceTransformerEmbedder
 from app.infrastructure.llm.fake_llm import FakeLlm
 from app.infrastructure.llm.openai_llm import OpenAiLlm
+from app.infrastructure.pdf.pymupdf_loader import PyMuPdfLoader
+from app.infrastructure.pdf.pypdf_loader import PypdfLoader
 
 
 def test_get_passage_embedder_returns_fake_embedder_by_default() -> None:
@@ -98,3 +101,27 @@ def test_get_llm_raises_for_unknown_provider(monkeypatch: pytest.MonkeyPatch) ->
 
     with pytest.raises(ValueError, match="Unknown llm_provider"):
         dependencies.get_llm()
+
+
+def test_get_pdf_loader_returns_pymupdf_loader_by_default() -> None:
+    pdf_loader = dependencies.get_pdf_loader(get_settings())
+
+    assert isinstance(pdf_loader, PyMuPdfLoader)
+
+
+def test_get_pdf_loader_with_pypdf_setting_returns_pypdf_loader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEDICAL_RAG_PDF_EXTRACTOR", "pypdf")
+
+    pdf_loader = dependencies.get_pdf_loader(get_settings())
+
+    assert isinstance(pdf_loader, PypdfLoader)
+
+
+def test_get_pdf_loader_raises_for_unknown_extractor() -> None:
+    class _FakeSettingsWithUnknownExtractor:
+        pdf_extractor = "not-a-real-extractor"
+
+    with pytest.raises(ValueError, match="Unknown pdf_extractor"):
+        dependencies.get_pdf_loader(_FakeSettingsWithUnknownExtractor())  # type: ignore[arg-type]

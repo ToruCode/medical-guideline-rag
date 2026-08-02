@@ -48,6 +48,7 @@ from app.infrastructure.embedding.sentence_transformer_embedder import (
 )
 from app.infrastructure.llm.fake_llm import FakeLlm
 from app.infrastructure.llm.openai_llm import OpenAiLlm
+from app.infrastructure.pdf.pymupdf_loader import PyMuPdfLoader
 from app.infrastructure.pdf.pypdf_loader import PypdfLoader
 from app.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 
@@ -55,8 +56,20 @@ if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 
 
-def get_pdf_loader() -> PdfLoader:
-    return PypdfLoader()
+def get_pdf_loader(settings: Annotated[Settings, Depends(get_settings)]) -> PdfLoader:
+    """Selects the PdfLoader implementation via Settings.pdf_extractor.
+
+    Raises ValueError for an unrecognized value, mirroring get_llm's
+    fail-fast behavior. Settings.pdf_extractor is Literal-typed, so
+    pydantic already rejects unknown values from the environment at
+    Settings() construction time; this branch is defense-in-depth for
+    callers that construct/monkeypatch a Settings-like object directly.
+    """
+    if settings.pdf_extractor == "pymupdf":
+        return PyMuPdfLoader()
+    if settings.pdf_extractor == "pypdf":
+        return PypdfLoader()
+    raise ValueError(f"Unknown pdf_extractor: {settings.pdf_extractor!r}")
 
 
 def get_text_splitter(settings: Annotated[Settings, Depends(get_settings)]) -> TextSplitter:

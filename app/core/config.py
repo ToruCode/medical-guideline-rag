@@ -31,6 +31,16 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
     chunk_size: int = 1000
     chunk_overlap: int = 200
+    # "pymupdf" (default; better Japanese text-layer extraction quality
+    # and retrieval accuracy than pypdf in a local single-document
+    # comparison) or "pypdf" (kept for rollback/compatibility). See
+    # docs/adr/0017-pdf-extraction-comparison-tooling.md for the
+    # comparison methodology and
+    # docs/adr/0018-adopt-pymupdf-for-production-pdf-extraction.md for
+    # the production adoption decision, including an open PyMuPDF
+    # license follow-up (AGPL-3.0/commercial dual license) that must be
+    # resolved before any commercial/public deployment.
+    pdf_extractor: Literal["pymupdf", "pypdf"] = "pymupdf"
     # "fake" (default, no dependencies) or "sentence_transformers" (local
     # multilingual model, downloaded on first use). See
     # docs/adr/0011-real-embedding-and-llm-adapters.md.

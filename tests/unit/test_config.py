@@ -12,6 +12,7 @@ def test_default_settings_values() -> None:
     assert settings.debug is False
     assert settings.log_level == "INFO"
     assert settings.api_v1_prefix == "/api/v1"
+    assert settings.pdf_extractor == "pymupdf"
 
 
 def test_settings_can_be_overridden_by_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -46,6 +47,23 @@ def test_unknown_env_vars_do_not_break_settings_loading(monkeypatch: pytest.Monk
 
 def test_invalid_environment_value_raises_validation_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MEDICAL_RAG_ENVIRONMENT", "not-a-real-environment")
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_pdf_extractor_can_be_overridden_by_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEDICAL_RAG_PDF_EXTRACTOR", "pypdf")
+
+    settings = Settings()
+
+    assert settings.pdf_extractor == "pypdf"
+
+
+def test_invalid_pdf_extractor_value_raises_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEDICAL_RAG_PDF_EXTRACTOR", "not-a-real-extractor")
 
     with pytest.raises(ValidationError):
         Settings()
