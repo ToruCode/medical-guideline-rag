@@ -269,13 +269,30 @@ Swagger UI, or call `GET /api/v1/health` directly.
 
 ## PDF loading
 
-Text-layer PDFs can be loaded page by page via
-`app.infrastructure.pdf.pypdf_loader.PypdfLoader`, which implements
-the `app.domain.ports.pdf_loader.PdfLoader` interface and returns
-immutable `DocumentPage` values. Scanned PDFs (image-only, no text
-layer) and encrypted PDFs are not supported; see
-`docs/adr/0003-pdf-extraction-library.md` for the reasoning and
-constraints.
+Text-layer PDFs can be loaded page by page via any implementation of
+the `app.domain.ports.pdf_loader.PdfLoader` interface, returning
+immutable `DocumentPage` values. **PyMuPDF
+(`app.infrastructure.pdf.pymupdf_loader.PyMuPdfLoader`) is the default
+production extractor** (`MEDICAL_RAG_PDF_EXTRACTOR=pymupdf`), selected
+in `app/api/dependencies.py`'s `get_pdf_loader()` based on
+`Settings.pdf_extractor`. `pypdf`
+(`app.infrastructure.pdf.pypdf_loader.PypdfLoader`) remains available
+as a config-only rollback (`MEDICAL_RAG_PDF_EXTRACTOR=pypdf`); an
+unrecognized value raises a clear error at startup. For the Japanese
+medical guideline PDFs this project targets, extraction quality has a
+large effect on downstream retrieval accuracy - a local, single-document
+comparison found PyMuPDF's extracted text meaningfully more reliable
+(fewer garbled/corrupted pages) and Recall/MRR substantially higher
+than `pypdf`'s under an identical retrieval configuration; see
+`docs/adr/0017-pdf-extraction-comparison-tooling.md`,
+`docs/adr/0018-adopt-pymupdf-for-production-pdf-extraction.md` (which
+also notes an open PyMuPDF license follow-up - AGPL-3.0/commercial dual
+license - that must be resolved before any commercial or public
+deployment), and `docs/pdf-extraction-comparison-results.md` for
+anonymized aggregate figures. Scanned PDFs (image-only, no text layer)
+and encrypted PDFs are not supported by either extractor; see
+`docs/adr/0003-pdf-extraction-library.md` for the original reasoning
+and constraints.
 
 PDFs can be uploaded via `POST /api/v1/documents/index` (see
 [API](#api) below). Only self-authored, license-free sample PDFs belong
@@ -663,9 +680,13 @@ and does not detect) alongside Recall@1/Recall@3/Recall@5/MRR under a
 fixed configuration (`chunk_size=1000`, `chunk_overlap=200`,
 `top_k=5`, `intfloat/multilingual-e5-base`). It reuses
 `scripts/retrieval_baseline_core.py`'s retrieval evaluation, injecting
-each extractor's already-extracted pages instead of always using
-`pypdf`. This is a comparison measurement only - production PDF
-extraction (`app/api/dependencies.py`) still uses `pypdf` only. As with
+each extractor's already-extracted pages. This tool always compares
+both extractors' output directly, independent of which one is
+currently configured as the production default via
+`MEDICAL_RAG_PDF_EXTRACTOR` (see [PDF loading](#pdf-loading) above -
+PyMuPDF is the default since
+`docs/adr/0018-adopt-pymupdf-for-production-pdf-extraction.md`, with
+`pypdf` kept for rollback and future comparisons). As with
 the other tools above, the real PDF, dataset, and per-question results
 are **never committed**; only the tool and a place to record
 **aggregate** comparison results
