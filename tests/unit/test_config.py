@@ -74,3 +74,19 @@ def test_get_settings_returns_cached_instance() -> None:
     second = get_settings()
 
     assert first is second
+
+
+def test_llm_context_max_chars_defaults_to_6000() -> None:
+    settings = Settings()
+
+    assert settings.llm_context_max_chars == 6000
+
+
+def test_llm_context_max_chars_can_be_overridden_by_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEDICAL_RAG_LLM_CONTEXT_MAX_CHARS", "1234")
+
+    settings = Settings()
+
+    assert settings.llm_context_max_chars == 1234

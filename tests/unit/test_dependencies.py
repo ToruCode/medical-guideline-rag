@@ -125,3 +125,13 @@ def test_get_pdf_loader_raises_for_unknown_extractor() -> None:
 
     with pytest.raises(ValueError, match="Unknown pdf_extractor"):
         dependencies.get_pdf_loader(_FakeSettingsWithUnknownExtractor())  # type: ignore[arg-type]
+
+
+def test_get_generate_answer_service_uses_configured_context_max_chars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEDICAL_RAG_LLM_CONTEXT_MAX_CHARS", "1234")
+
+    service = dependencies.get_generate_answer_service(FakeLlm(), get_settings())
+
+    assert service._context_max_chars == 1234

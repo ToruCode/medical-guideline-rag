@@ -7,6 +7,7 @@ no real network requests and need no real API key.
 from typing import Any
 
 import pytest
+from app.domain.exceptions.llm import LlmGenerationError
 from app.infrastructure.llm.openai_llm import OpenAiLlm
 
 
@@ -89,10 +90,12 @@ def test_generate_returns_empty_string_when_content_is_none(
     assert result == ""
 
 
-def test_generate_propagates_client_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generate_translates_client_errors_to_llm_generation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class RaisingCompletions:
         def create(self, **kwargs: Any) -> None:
-            raise RuntimeError("openai api unavailable")
+            raise RuntimeError("do-not-leak-this-sdk-error-detail sk-should-not-leak-either")
 
     class RaisingClient:
         def __init__(self, api_key: str, timeout: float) -> None:
@@ -102,5 +105,10 @@ def test_generate_propagates_client_errors(monkeypatch: pytest.MonkeyPatch) -> N
 
     llm = OpenAiLlm(api_key="sk-test", model="gpt-4o-mini", timeout=10.0)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(LlmGenerationError) as exc_info:
         llm.generate("a prompt")
+
+    assert "RuntimeError" in str(exc_info.value)
+    assert "do-not-leak-this-sdk-error-detail" not in str(exc_info.value)
+    assert "sk-should-not-leak-either" not in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, RuntimeError)

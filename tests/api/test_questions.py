@@ -1,7 +1,10 @@
 from pathlib import Path
 
 import pytest
+from app.api.dependencies import get_llm
 from app.core.constants import CITATION_TEXT_PREVIEW_MAX_CHARS
+from app.domain.exceptions.llm import LlmGenerationError
+from app.infrastructure.llm.fake_llm import RaisingLlm
 from app.main import app
 from fastapi.testclient import TestClient
 from tests.support.pdf_factory import build_pdf
@@ -115,3 +118,21 @@ def test_ask_question_logs_do_not_contain_answer_or_passage_text(
     log_output = "\n".join(caplog.messages)
     assert "do-not-leak-this-passage-text" not in log_output
     assert response.json()["answer"] not in log_output
+
+
+def test_ask_question_translates_llm_generation_error_to_502(tmp_path: Path) -> None:
+    _index_sample_document(tmp_path)
+
+    def override_llm() -> RaisingLlm:
+        return RaisingLlm(LlmGenerationError("do-not-leak-this-detail"))
+
+    app.dependency_overrides[get_llm] = override_llm
+    try:
+        response = client.post(
+            "/api/v1/questions/ask", json={"question": "dosage guidance", "top_k": 3}
+        )
+    finally:
+        app.dependency_overrides.pop(get_llm, None)
+
+    assert response.status_code == 502
+    assert "do-not-leak-this-detail" not in response.text

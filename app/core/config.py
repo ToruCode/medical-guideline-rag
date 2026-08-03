@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     llm_model_name: str = "gpt-4o-mini"
     llm_api_key: SecretStr | None = None
     llm_timeout_seconds: float = 30.0
+    # Max total characters of retrieved-passage text included in the
+    # prompt sent to the Llm. A simple, explainable character count
+    # rather than a token count - see
+    # docs/adr/0022-context-length-control-and-llm-error-handling.md.
+    llm_context_max_chars: int = 6000
 
 
 @lru_cache
