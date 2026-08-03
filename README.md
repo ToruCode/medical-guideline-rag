@@ -706,6 +706,20 @@ ready-to-review Markdown table for
 `docs/pdf-extraction-comparison-results.md`. Pass `--verbose` to also
 print each extractor's per-question breakdown (local use only).
 
+## Table-aware chunking comparison
+
+`scripts/compare_chunking_strategies.py` compared the existing
+fixed-size chunker against a rule-based table-aware chunker
+(`scripts/table_aware_chunking.py`) under a fixed `hybrid_rerank`
+retrieval configuration. On a real guideline PDF it underperformed the
+existing chunker on Recall@1/Recall@3/Recall@5/MRR, and its latency
+improvement was too small to offset that regression - **it was
+compared but is not adopted**. Production chunking remains
+`FixedSizeTextSplitter`. See
+`docs/adr/0021-table-aware-chunking-comparison.md` and
+`docs/table-aware-chunking-comparison-results.md` for the full design
+and recorded results.
+
 ## Project layout
 
 See `docs/architecture.md` for the layered architecture and
