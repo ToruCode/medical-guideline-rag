@@ -151,7 +151,23 @@ def dense_search(
     ]
 
 
-def hybrid_search(
+@dataclass(frozen=True, slots=True)
+class HybridCandidate:
+    """One candidate from the Dense/BM25 union step, before any final
+    top_k cut - the shared building block behind hybrid_search() (this
+    module, cuts at final_top_k) and Issue #25's Cross Encoder
+    reranking pipeline (scripts/reranking_core.py, cuts at
+    reranker_candidate_k instead and needs the full, untruncated chunk
+    text - not RankedChunkResult's truncated text_preview).
+    """
+
+    chunk: Chunk
+    dense_score: float
+    bm25_score: float
+    hybrid_score: float
+
+
+def rank_hybrid_candidates(
     query_vector: list[float],
     query_tokens: list[str],
     corpus: IndexedCorpus,
@@ -159,22 +175,20 @@ def hybrid_search(
     *,
     dense_candidate_k: int,
     bm25_candidate_k: int,
-    final_top_k: int,
-) -> list[RankedChunkResult]:
+) -> list[HybridCandidate]:
     """Dense candidates (top dense_candidate_k by cosine similarity) and
     BM25 candidates (top bm25_candidate_k by BM25 score) are unioned,
     then every candidate in that union is scored by *both* signals
     against the full corpus (not only within each signal's own
     candidate list - this avoids inventing a placeholder score for a
-    candidate that one signal's top-k missed but the other's did not),
-    fused by scorer, and the top final_top_k by fused score is
-    returned.
+    candidate that one signal's top-k missed but the other's did not)
+    and fused by scorer.
 
-    When dense_candidate_k >= final_top_k, this produces exactly the
-    same ranking as dense_search() at scorer alpha=1.0: min-max
-    normalization is a monotonic transform of the raw Dense score, and
-    the true top final_top_k by Dense score are always included in
-    dense_candidate_k's slice by construction.
+    Returns the *entire* union, descending by fused score (ties broken
+    by ascending chunk_id) - callers decide how many to keep:
+    hybrid_search() keeps final_top_k; scripts/reranking_core.py keeps
+    reranker_candidate_k instead, to rerank before any final cut (see
+    docs/adr/0020-cross-encoder-reranker-comparison.md).
     """
     total_chunks = len(corpus.chunks)
     if total_chunks == 0:
@@ -203,19 +217,56 @@ def hybrid_search(
     fused_scores = scorer.fuse(dense_scores, bm25_scores)
 
     ranked_ids = sorted(union_ids, key=lambda chunk_id: (-fused_scores[chunk_id], chunk_id))
-    ranked_ids = ranked_ids[:final_top_k]
 
+    return [
+        HybridCandidate(
+            chunk=chunk_by_id[chunk_id],
+            dense_score=dense_scores[chunk_id],
+            bm25_score=bm25_scores[chunk_id],
+            hybrid_score=fused_scores[chunk_id],
+        )
+        for chunk_id in ranked_ids
+    ]
+
+
+def hybrid_search(
+    query_vector: list[float],
+    query_tokens: list[str],
+    corpus: IndexedCorpus,
+    scorer: ScoreFuser,
+    *,
+    dense_candidate_k: int,
+    bm25_candidate_k: int,
+    final_top_k: int,
+) -> list[RankedChunkResult]:
+    """Dense/BM25 candidate union (rank_hybrid_candidates()), cut to the
+    top final_top_k by fused score.
+
+    When dense_candidate_k >= final_top_k, this produces exactly the
+    same ranking as dense_search() at scorer alpha=1.0: min-max
+    normalization is a monotonic transform of the raw Dense score, and
+    the true top final_top_k by Dense score are always included in
+    dense_candidate_k's slice by construction.
+    """
+    candidates = rank_hybrid_candidates(
+        query_vector,
+        query_tokens,
+        corpus,
+        scorer,
+        dense_candidate_k=dense_candidate_k,
+        bm25_candidate_k=bm25_candidate_k,
+    )
     return [
         RankedChunkResult(
             rank=rank,
-            page_number=chunk_by_id[chunk_id].page_number,
-            chunk_index=chunk_by_id[chunk_id].chunk_index,
-            final_score=fused_scores[chunk_id],
-            dense_score=dense_scores[chunk_id],
-            bm25_score=bm25_scores[chunk_id],
-            text_preview=truncate_text(chunk_by_id[chunk_id].text),
+            page_number=candidate.chunk.page_number,
+            chunk_index=candidate.chunk.chunk_index,
+            final_score=candidate.hybrid_score,
+            dense_score=candidate.dense_score,
+            bm25_score=candidate.bm25_score,
+            text_preview=truncate_text(candidate.chunk.text),
         )
-        for rank, chunk_id in enumerate(ranked_ids, start=1)
+        for rank, candidate in enumerate(candidates[:final_top_k], start=1)
     ]
 
 
