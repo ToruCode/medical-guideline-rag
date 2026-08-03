@@ -1,5 +1,12 @@
 import pytest
-from tests.support.evaluation.metrics import mean, recall_at_k, reciprocal_rank
+from tests.support.evaluation.metrics import (
+    answer_point_coverage,
+    citation_precision,
+    citation_recall,
+    mean,
+    recall_at_k,
+    reciprocal_rank,
+)
 
 
 def test_reciprocal_rank_returns_inverse_of_first_match_rank() -> None:
@@ -56,3 +63,52 @@ def test_mean_computes_arithmetic_average() -> None:
 def test_mean_rejects_empty_scores() -> None:
     with pytest.raises(ValueError):
         mean([])
+
+
+def test_citation_precision_is_fraction_of_citations_that_are_expected() -> None:
+    assert citation_precision({1, 2}, {2, 3}) == pytest.approx(0.5)
+
+
+def test_citation_precision_is_one_when_all_citations_are_expected() -> None:
+    assert citation_precision({2}, {2, 3}) == 1.0
+
+
+def test_citation_precision_returns_none_for_no_citations() -> None:
+    assert citation_precision(set(), {1}) is None
+
+
+def test_citation_recall_is_fraction_of_expected_pages_that_were_cited() -> None:
+    assert citation_recall({2}, {2, 3}) == pytest.approx(0.5)
+
+
+def test_citation_recall_is_one_when_all_expected_pages_were_cited() -> None:
+    assert citation_recall({2, 3, 9}, {2, 3}) == 1.0
+
+
+def test_citation_recall_is_zero_for_no_matching_citations() -> None:
+    assert citation_recall({9}, {2, 3}) == 0.0
+
+
+def test_citation_recall_rejects_empty_expected_pages() -> None:
+    with pytest.raises(ValueError):
+        citation_recall({1}, set())
+
+
+def test_answer_point_coverage_counts_matching_substrings_case_insensitively() -> None:
+    answer = "Adults should take 500 mg twice daily."
+    assert answer_point_coverage(answer, ["500 MG", "twice daily", "not present"]) == pytest.approx(
+        2 / 3
+    )
+
+
+def test_answer_point_coverage_is_one_when_all_points_are_present() -> None:
+    answer = "Take 500 mg twice daily."
+    assert answer_point_coverage(answer, ["500 mg", "twice daily"]) == 1.0
+
+
+def test_answer_point_coverage_is_zero_when_no_points_are_present() -> None:
+    assert answer_point_coverage("unrelated text", ["500 mg"]) == 0.0
+
+
+def test_answer_point_coverage_returns_none_for_no_expected_points() -> None:
+    assert answer_point_coverage("any answer", []) is None
