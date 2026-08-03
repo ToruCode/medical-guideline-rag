@@ -99,3 +99,50 @@ progress across chunking/embedding experiments locally. See
 `scripts/evaluate_retrieval_baseline.py --help` for all options, and
 `docs/baseline-retrieval-evaluation.md` for where aggregate results
 are recorded.
+
+## Answer-quality fields (optional, Issue #10)
+
+`scripts/evaluate_answer_quality.py` reads this same file and format,
+plus two additional, per-case, **optional** fields used only for
+answer-quality-and-citation-consistency measurement (never for
+retrieval evaluation, which ignores them):
+
+```json
+{
+  "document": { "source_path": "data/raw/example_guideline.pdf", "label": "Guideline A" },
+  "cases": [
+    {
+      "question": "What is the adult dosage of Medicamentum X?",
+      "granularity": "page",
+      "expected": [1],
+      "expected_answer_points": ["500 mg", "twice daily"],
+      "expected_insufficient_evidence": false
+    }
+  ]
+}
+```
+
+- **`cases[].expected_answer_points`** (default `[]`): short, lexical
+  substrings (not full sentences, and never copyrighted guideline
+  text verbatim beyond a few words) that a correct answer should
+  contain. Checked with a case-insensitive substring match
+  (`answer_point_coverage()` in `tests/support/evaluation/metrics.py`)
+  - this cannot detect a correct but differently-worded answer; see
+    `docs/adr/0023-answer-quality-and-citation-consistency-evaluation.md`.
+- **`cases[].expected_insufficient_evidence`** (default `false`):
+  whether this question is expected to return
+  `is_insufficient_evidence: true`. Only meaningful for a case that
+  retrieves zero chunks (there is no relevance-score threshold
+  anywhere in retrieval - see the ADR above for why "off-topic but
+  something was retrieved" is not the same as "insufficient
+  evidence").
+
+```bash
+# Default: FakeLlm, no API key or network needed.
+uv run python -m scripts.evaluate_answer_quality \
+  --dataset data/eval/my_guideline_qa.json --save-report
+
+# Opt-in: measure against the real OpenAI API (billable, network required).
+uv run python -m scripts.evaluate_answer_quality \
+  --dataset data/eval/my_guideline_qa.json --llm openai
+```

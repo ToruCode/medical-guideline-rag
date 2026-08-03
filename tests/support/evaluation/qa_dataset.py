@@ -52,3 +52,53 @@ EVALUATION_CASES: list[EvaluationCase] = [
     EvaluationCase("Does Medicamentum X interact with other medications?", [7]),
     EvaluationCase("What are the symptoms of a Medicamentum X overdose?", [8]),
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerEvaluationCase:
+    """One evaluation question plus the ground truth needed to measure
+    answer quality and citation consistency (Issue #10), not just
+    retrieval (contrast with EvaluationCase above).
+
+    expected_answer_points are short, lexical substrings a correct
+    answer should contain - deliberately not full sentences, since
+    answer_point_coverage (tests/support/evaluation/metrics.py) is a
+    case-insensitive substring match, not a semantic one; see
+    docs/adr/0023-answer-quality-and-citation-consistency-evaluation.md.
+    """
+
+    question: str
+    expected_page_numbers: list[int]
+    expected_answer_points: list[str]
+
+
+# Kept in sync 1:1 with SAMPLE_PAGES, like EVALUATION_CASES. Every
+# expected_answer_points entry is a substring that appears verbatim
+# (case-insensitive) in the corresponding SAMPLE_PAGES sentence, so a
+# FakeLlm can be scripted to "answer correctly" by simply repeating
+# that sentence - see tests/integration/test_live_answer_quality_evaluation.py
+# for where a *real* LLM's answer is measured against these same points.
+ANSWER_EVALUATION_CASES: list[AnswerEvaluationCase] = [
+    AnswerEvaluationCase(
+        "What is the adult dosage of Medicamentum X?", [1], ["500 mg", "twice daily"]
+    ),
+    AnswerEvaluationCase("How should Medicamentum X be dosed in children?", [2], ["weight-based"]),
+    AnswerEvaluationCase(
+        "What are the common side effects of Medicamentum X?", [3], ["nausea", "headache"]
+    ),
+    AnswerEvaluationCase("When is Medicamentum X contraindicated?", [4], ["renal impairment"]),
+    AnswerEvaluationCase("How should Medicamentum X be stored?", [5], ["25 degrees"]),
+    AnswerEvaluationCase(
+        "What should a patient do if they miss a dose of Medicamentum X?",
+        [6],
+        ["as soon as remembered"],
+    ),
+    AnswerEvaluationCase(
+        "Does Medicamentum X interact with other medications?", [7], ["anticoagulant"]
+    ),
+    AnswerEvaluationCase(
+        "What are the symptoms of a Medicamentum X overdose?",
+        [8],
+        ["dizziness", "irregular heartbeat"],
+    ),
+]

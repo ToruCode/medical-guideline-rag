@@ -743,6 +743,47 @@ compared but is not adopted**. Production chunking remains
 `docs/table-aware-chunking-comparison-results.md` for the full design
 and recorded results.
 
+## Answer quality and citation consistency evaluation
+
+`scripts/evaluate_answer_quality.py` measures whether generated answers
+are grounded in retrieved passages and whether returned citations are
+consistent with the evidence, using deterministic metrics only (no
+LLM-as-a-Judge): citation precision/recall against a dataset's expected
+pages, insufficient-evidence accuracy, a lexical (substring-match)
+answer-point coverage score, and a citation-consistency check
+(`citations_are_subset_of_retrieved()` - expected to always pass, since
+`GenerateAnswerService` already guarantees this by construction; the
+check exists as a regression safety net). Runs with a `FakeLlm` by
+default (no API key/network required); pass `--llm openai` to measure
+against a real, billable OpenAI call instead. Extends the same local,
+gitignored dataset format as the retrieval-evaluation tools above with
+two optional fields, `expected_answer_points` and
+`expected_insufficient_evidence` - see
+`docs/evaluation-dataset-format.md`. See
+`docs/adr/0023-answer-quality-and-citation-consistency-evaluation.md`
+for the full design reasoning, including why this is deterministic
+rather than LLM-judged and why the evaluation-agnostic dataset-loading
+code was factored out into `scripts/evaluation_common.py` for reuse by
+future evaluation tools.
+
+```bash
+# Default: FakeLlm, no API key or network needed.
+uv run python -m scripts.evaluate_answer_quality \
+  --dataset data/eval/my_guideline_qa.json --save-report
+
+# Opt-in: measure against the real OpenAI API (billable, network required).
+uv run python -m scripts.evaluate_answer_quality \
+  --dataset data/eval/my_guideline_qa.json --llm openai
+```
+
+A CI-reproducible, deterministic (`FakeLlm`-based) correctness test for
+the evaluation logic itself lives in
+`tests/unit/test_answer_quality_core.py` (always runs, no external
+service). An opt-in test against the real OpenAI API and a real
+`sentence-transformers` model lives in
+`tests/integration/test_live_answer_quality_evaluation.py` (skipped
+unless `RUN_SLOW_TESTS=1` and a real `MEDICAL_RAG_LLM_API_KEY` are set).
+
 ## Project layout
 
 See `docs/architecture.md` for the layered architecture and
