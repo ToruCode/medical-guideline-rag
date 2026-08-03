@@ -9,6 +9,7 @@ from app.api.dependencies import get_ask_question_service
 from app.application.services.ask_question import AskQuestionService
 from app.core.constants import CITATION_TEXT_PREVIEW_MAX_CHARS
 from app.domain.exceptions.embedding import EmbeddingError
+from app.domain.exceptions.llm import LlmGenerationError
 from app.domain.exceptions.retrieval import EmptyQueryError
 from app.domain.exceptions.vector_store import InvalidTopKError, VectorStoreError
 from app.domain.models.search_result import SearchResult
@@ -65,6 +66,12 @@ def ask_question(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="top_k must be a positive integer.",
+        ) from exc
+    except LlmGenerationError as exc:
+        logger.exception("ask_question failed: llm generation error")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to generate an answer from the language model.",
         ) from exc
     except (EmbeddingError, VectorStoreError) as exc:
         logger.exception("ask_question failed unexpectedly")

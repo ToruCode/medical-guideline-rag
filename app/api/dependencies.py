@@ -206,8 +206,9 @@ def get_retrieve_chunks_service(
 
 def get_generate_answer_service(
     llm: Annotated[Llm, Depends(get_llm)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> GenerateAnswerService:
-    return GenerateAnswerService(llm)
+    return GenerateAnswerService(llm, context_max_chars=settings.llm_context_max_chars)
 
 
 def get_ask_question_service(

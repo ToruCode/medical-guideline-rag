@@ -6,12 +6,22 @@ app/api/dependencies.py always does, regardless of which llm_provider
 is configured - never pays the cost of importing the SDK. See
 docs/adr/0011-real-embedding-and-llm-adapters.md.
 
-No exception raised by the OpenAI client is caught here; it propagates
-to the caller unchanged, matching GenerateAnswerService's existing
-fail-fast handling of Llm errors (docs/adr/0009-generation-strategy.md).
-Retries on transient failures are left to the SDK's own built-in retry
-behavior; no custom retry logic is implemented.
+Any exception raised by the OpenAI client is translated to
+LlmGenerationError (never the raw SDK exception) so callers depend only
+on app.domain.exceptions.llm, not on the openai package's exception
+hierarchy; see docs/adr/0022-context-length-control-and-llm-error-handling.md.
+The translated exception's message never includes the API key (it is
+never part of any OpenAI SDK exception's message) and only names the
+underlying exception's type, not its full text, as a defensive measure
+against a future SDK version embedding request details in its message.
+GenerateAnswerService still propagates whatever the Llm raises
+unchanged, matching its existing fail-fast handling
+(docs/adr/0009-generation-strategy.md). Retries on transient failures
+are left to the SDK's own built-in retry behavior; no custom retry
+logic is implemented.
 """
+
+from app.domain.exceptions.llm import LlmGenerationError
 
 
 class OpenAiLlm:
@@ -22,8 +32,11 @@ class OpenAiLlm:
         self._model = model
 
     def generate(self, prompt: str) -> str:
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": prompt}],
+            )
+        except Exception as exc:
+            raise LlmGenerationError(f"OpenAI request failed: {type(exc).__name__}") from exc
         return response.choices[0].message.content or ""

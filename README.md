@@ -425,14 +425,36 @@ is returned instead, so the system can never invent an answer when no
 guideline evidence was retrieved. `GenerationResult` (`answer`,
 `citations: list[SearchResult]`, `is_insufficient_evidence`) reuses
 `SearchResult` rather than introducing a separate citation model.
-Exceptions from the `Llm` are not caught and propagate to the caller
-unchanged. Logging includes only the citation count and the
-insufficient-evidence outcome, never question text, guideline passage
-text, or the generated answer text. See
-`docs/adr/0009-generation-strategy.md` for the reasoning, including the
-current limitation that citations only carry title/source name and
-page number (not edition/chapter/section, which `Chunk` does not yet
-model).
+Logging includes only the citation count and the insufficient-evidence
+outcome, never question text, guideline passage text, or the generated
+answer text. See `docs/adr/0009-generation-strategy.md` for the
+reasoning, including the current limitation that citations only carry
+title/source name and page number (not edition/chapter/section, which
+`Chunk` does not yet model).
+
+The prompt instructs the `Llm` to answer only from the numbered
+passages, to treat those passages as reference material rather than
+instructions (so text inside a retrieved guideline can never redirect
+the model's behavior), to never provide a medical diagnosis or a final
+treatment decision, and to answer in Japanese. Before building the
+prompt, `select_chunks_within_budget()` keeps only as many
+highest-scoring passages as fit within
+`MEDICAL_RAG_LLM_CONTEXT_MAX_CHARS` (default 6000 characters - a plain
+character count, not a token count), never truncating a kept passage's
+own text and always keeping at least the first passage even if it alone
+exceeds the budget. `citations` reflects exactly this (possibly
+narrowed) set - a passage dropped for length is never cited, since the
+`Llm` never saw it. See
+`docs/adr/0022-context-length-control-and-llm-error-handling.md` for
+the full design.
+
+Any exception from the injected `Llm` still propagates out of
+`GenerateAnswerService` unchanged (fail-fast, per
+`docs/adr/0009-generation-strategy.md`); `OpenAiLlm` itself translates
+any exception raised by the OpenAI client into
+`app.domain.exceptions.llm.LlmGenerationError` (never the raw SDK
+exception, and never including the API key or other request detail),
+which `POST /questions/ask` maps to HTTP 502.
 
 By default the FastAPI app uses `app.infrastructure.llm.fake_llm.FakeLlm`,
 a deterministic, dependency-free stand-in with no network access.
@@ -468,7 +490,8 @@ Two endpoints expose the services above over HTTP, prefixed with
   `citations: list[CitationSchema]`, `is_insufficient_evidence`) -
   including when no evidence was retrieved, which is a normal result,
   not an error. An empty/whitespace-only question or non-positive
-  `top_k` returns 400/422.
+  `top_k` returns 400/422. A failure from the configured `Llm` (e.g. the
+  OpenAI API) returns 502.
 
 `app/api/dependencies.py` is the only module that constructs
 Infrastructure implementations (Fake or real, depending on

@@ -7,6 +7,7 @@ from app.application.services.generate_answer import (
     GenerateAnswerService,
     GenerationResult,
     build_context,
+    select_chunks_within_budget,
 )
 from app.domain.exceptions.retrieval import EmptyQueryError
 from app.domain.models.chunk import Chunk
@@ -36,8 +37,8 @@ def _make_search_result(
 
 def test_execute_passes_context_and_question_to_llm_and_returns_citations() -> None:
     results = [
-        _make_search_result(text="first passage"),
-        _make_search_result(text="second passage"),
+        _make_search_result(text="first passage", page_number=1),
+        _make_search_result(text="second passage", page_number=2),
     ]
     llm = FakeLlm(answer="the answer")
     service = GenerateAnswerService(llm)
@@ -143,3 +144,123 @@ def test_generation_result_is_frozen() -> None:
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         result.answer = "b"  # type: ignore[misc]
+
+
+# --- select_chunks_within_budget ---
+
+
+def test_select_chunks_within_budget_keeps_all_when_under_budget() -> None:
+    results = [
+        _make_search_result(text="short one", page_number=1),
+        _make_search_result(text="short two", page_number=2),
+    ]
+
+    selected = select_chunks_within_budget(results, max_chars=10_000)
+
+    assert selected == results
+
+
+def test_select_chunks_within_budget_drops_chunks_exceeding_the_limit() -> None:
+    results = [
+        _make_search_result(text="a" * 50, page_number=1, chunk_index=0),
+        _make_search_result(text="b" * 50, page_number=2, chunk_index=0),
+        _make_search_result(text="c" * 50, page_number=3, chunk_index=0),
+    ]
+    # Budget for exactly the first result's formatted block, nothing more.
+    budget = len(build_context([results[0]]))
+
+    selected = select_chunks_within_budget(results, max_chars=budget)
+
+    assert selected == [results[0]]
+
+
+def test_select_chunks_within_budget_preserves_page_number_and_chunk_index() -> None:
+    results = [_make_search_result(text="x" * 50, page_number=7, chunk_index=2)]
+
+    selected = select_chunks_within_budget(results, max_chars=len(build_context(results)))
+
+    assert selected[0].embedded_chunk.chunk.page_number == 7
+    assert selected[0].embedded_chunk.chunk.chunk_index == 2
+
+
+def test_select_chunks_within_budget_always_keeps_first_result_even_if_oversized() -> None:
+    oversized = _make_search_result(text="z" * 10_000)
+
+    selected = select_chunks_within_budget([oversized], max_chars=10)
+
+    assert selected == [oversized]
+
+
+def test_select_chunks_within_budget_deduplicates_by_chunk_id() -> None:
+    original = _make_search_result(text="same chunk", page_number=1, chunk_index=0)
+    duplicate = _make_search_result(text="same chunk", page_number=1, chunk_index=0)
+
+    selected = select_chunks_within_budget([original, duplicate], max_chars=10_000)
+
+    assert selected == [original]
+
+
+def test_select_chunks_within_budget_empty_input_returns_empty() -> None:
+    assert select_chunks_within_budget([], max_chars=1000) == []
+
+
+# --- GenerateAnswerService: context budget integration ---
+
+
+def test_execute_citations_reflect_only_chunks_that_fit_the_budget() -> None:
+    fitting = _make_search_result(text="fits", page_number=1, chunk_index=0)
+    dropped = _make_search_result(text="y" * 10_000, page_number=2, chunk_index=0)
+    llm = FakeLlm(answer="the answer")
+    service = GenerateAnswerService(llm, context_max_chars=len(build_context([fitting])))
+
+    result = service.execute("a question", search_results=[fitting, dropped])
+
+    assert result.citations == [fitting]
+    assert dropped.embedded_chunk.chunk.text not in (llm.received_prompt or "")
+
+
+def test_execute_default_context_budget_keeps_small_fixtures_unchanged() -> None:
+    results = [
+        _make_search_result(text="first", page_number=1),
+        _make_search_result(text="second", page_number=2),
+    ]
+    llm = FakeLlm(answer="the answer")
+    service = GenerateAnswerService(llm)
+
+    result = service.execute("a question", search_results=results)
+
+    assert result.citations == results
+
+
+# --- Prompt safety strengthening ---
+
+
+def test_prompt_instructs_answering_in_japanese() -> None:
+    llm = FakeLlm(answer="the answer")
+    service = GenerateAnswerService(llm)
+
+    service.execute("a question", search_results=[_make_search_result()])
+
+    assert "Japanese" in (llm.received_prompt or "")
+
+
+def test_prompt_treats_context_as_reference_not_instructions() -> None:
+    llm = FakeLlm(answer="the answer")
+    service = GenerateAnswerService(llm)
+
+    service.execute("a question", search_results=[_make_search_result()])
+
+    prompt = llm.received_prompt or ""
+    assert "reference material" in prompt
+    assert "not instructions" in prompt
+
+
+def test_prompt_forbids_diagnosis_and_treatment_decisions() -> None:
+    llm = FakeLlm(answer="the answer")
+    service = GenerateAnswerService(llm)
+
+    service.execute("a question", search_results=[_make_search_result()])
+
+    prompt = llm.received_prompt or ""
+    assert "diagnosis" in prompt
+    assert "treatment decision" in prompt
