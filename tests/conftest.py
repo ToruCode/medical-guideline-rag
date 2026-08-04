@@ -31,13 +31,14 @@ def _clear_singleton_caches() -> None:
     dependencies._get_sentence_transformer_model.cache_clear()
     dependencies.get_vector_store.cache_clear()
     dependencies.get_llm.cache_clear()
+    dependencies.get_object_storage.cache_clear()
 
 
 @pytest.fixture(autouse=True)
 def _clear_shared_singleton_caches() -> Iterator[None]:
-    """Ensure the process-wide Embedder/VectorStore/Llm singletons used by
-    the API's dependency providers (app/api/dependencies.py) don't leak
-    state between tests.
+    """Ensure the process-wide Embedder/VectorStore/Llm/ObjectStorage
+    singletons used by the API's dependency providers
+    (app/api/dependencies.py) don't leak state between tests.
     """
     _clear_singleton_caches()
     yield

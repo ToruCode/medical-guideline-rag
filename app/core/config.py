@@ -75,6 +75,15 @@ class Settings(BaseSettings):
     # already-gitignored qdrant_storage/ entry - never commit its contents.
     vector_store_path: str = "./qdrant_storage"
     vector_store_collection_name: str = "guideline_chunks"
+    # "local" (default - PDFs are never persisted beyond the request's
+    # own temp file; POST /documents/index only) or "s3" (required for
+    # POST /documents/upload and POST /documents/index-from-s3). See
+    # docs/adr/0028-s3-document-storage.md.
+    storage_provider: Literal["local", "s3"] = "local"
+    # S3 bucket name. Only used when storage_provider="s3". Credentials
+    # and region are resolved via boto3's own standard chain, never a
+    # setting here - see docs/adr/0028-s3-document-storage.md.
+    s3_bucket_name: str | None = None
 
 
 @lru_cache
