@@ -137,13 +137,51 @@ Two constraints from earlier issues shaped this design directly:
   the repo root) for reproducible provider versions. Migrating to a
   remote backend is a documented future improvement once/if
   multi-machine or team access to this state becomes necessary.
-- **No AWS resources were created while implementing this PR.** Only
-  `terraform fmt` and `terraform validate` (against a local,
-  backend-disabled `terraform init`) were run - both require no AWS
-  credentials and create nothing. `terraform plan`/`terraform apply`
-  need real AWS credentials and are explicitly left to the user to run
-  themselves, per this project's own workflow rules around
-  cost-incurring actions.
+- **No AWS resources were created while implementing PR2 (the
+  Terraform in this ADR).** Only `terraform fmt` and `terraform
+  validate` (against a local, backend-disabled `terraform init`) were
+  run - both require no AWS credentials and create nothing.
+  `terraform plan`/`terraform apply` need real AWS credentials and are
+  explicitly left to the user to run themselves, per this project's
+  own workflow rules around cost-incurring actions.
+- **The GitHub Actions `deploy` job (`.github/workflows/ci.yml`, PR3)
+  updates existing ECS resources; it never runs Terraform.**
+  Provisioning (`terraform apply`) and deploying a new image stay
+  deliberately separate concerns/cadences (ADR decision carried over
+  from PR2's own design). The job: authenticates via OIDC against
+  `github_actions_deploy` (no long-lived AWS keys stored in GitHub,
+  trust policy restricted to this repo's `main` branch - see `iam.tf`
+  above); builds one image and pushes it to the single shared ECR
+  repository tagged with both the commit SHA (for precise,
+  per-commit rollback via `aws ecs update-service --task-definition
+  <family>:<revision>`) and `latest`; then, for each of `app`/`ui`,
+  downloads the *current* task definition, re-renders it with only the
+  `image` field changed (`aws-actions/amazon-ecs-render-task-definition`),
+  registers that as a new revision, and updates the service
+  (`aws-actions/amazon-ecs-deploy-task-definition`,
+  `wait-for-service-stability: true`) - every other field (environment,
+  secrets, EFS volume, IAM roles, health check) stays exactly as
+  Terraform defined it. Terraform never runs as part of this job, so a
+  Terraform-level config change (e.g. a new environment variable) still
+  requires a manual `terraform apply` first.
+- **ECS cluster/service/task-family/ECR-repository names are hardcoded
+  in the `deploy` job**, matching `variables.tf`'s `project_name`
+  default (`"medical-guideline-rag"`) rather than being derived from
+  Terraform outputs at workflow run time. This keeps the job simple
+  (no Terraform state access from CI) at the cost of needing a manual
+  update to the job if `project_name` is ever changed from its
+  default - documented directly in the job's own comments.
+- **Bootstrapping the very first deployed image is a documented,
+  two-option manual step** (`docs/deployment-guide.md`'s "Bootstrap
+  order" section), not something `terraform apply` or the `deploy` job
+  alone can do: the AWS provider's `aws_ecs_service` resource does not
+  wait for the service to reach a healthy steady state before
+  `terraform apply` itself completes, so the initial task definition
+  (pointing at an image that does not exist yet) is created
+  successfully while its task fails to start - resolved either by
+  pushing an image manually once, or simply by finishing "GitHub
+  Actions setup" and pushing to `main`, whichever the operator
+  prefers.
 
 ## Consequences
 
@@ -170,10 +208,15 @@ Two constraints from earlier issues shaped this design directly:
 - `terraform apply` bootstrap order matters: the `app`/`ui` ECS
   services reference `aws_ecr_repository.app`'s URL in their task
   definitions, but the image itself must be pushed to that repository
-  before the services can start healthy tasks - documented as an
-  explicit bootstrap step in `docs/deployment-guide.md` (this PR adds
-  the skeleton; PR3 completes it once the CI/CD pipeline exists to
-  push that first image).
+  before the services can start healthy tasks - documented in
+  `docs/deployment-guide.md`'s "Bootstrap order" section, including
+  the CI/CD-based path added in PR3 above.
+- The `deploy` job's hardcoded resource names (see above) mean
+  renaming `project_name` away from its default requires updating both
+  `terraform.tfvars` and `.github/workflows/ci.yml` together - an
+  easy step to miss, called out in the job's own comments as the
+  documented trade-off for not looking names up from Terraform state
+  at deploy time.
 - Local Terraform state means only one operator/machine can safely run
   `terraform apply` at a time, and `terraform.tfstate` (which contains
   sensitive values such as resource ARNs) must be backed up and never
