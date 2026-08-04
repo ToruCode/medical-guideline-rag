@@ -1,0 +1,14 @@
+# Local state - see docs/adr/0029-aws-ecs-fargate-deployment.md for
+# why this stack does not use a remote (S3) backend yet.
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+crash.*.log
+
+# Real variable values - copy terraform.tfvars.example instead.
+terraform.tfvars
+*.auto.tfvars
+
+# .terraform.lock.hcl is intentionally NOT ignored - it is committed
+# for reproducible provider versions, same as uv.lock at the repo root.
