@@ -45,10 +45,13 @@ Thumbs.db
 # -----------------------------
 # Project data and docs (not needed inside the image)
 # -----------------------------
+# data/ stays excluded from the build context - PDFs and vector-store
+# output must never be baked into an image layer. It is bind-mounted at
+# runtime instead (compose.yaml). scripts/ IS included: it is needed to
+# run scripts/index_documents.py inside the container (see Dockerfile).
 data/
 docs/
 tests/
-scripts/
 logs/
 *.log
 
