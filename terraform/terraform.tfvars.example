@@ -1,0 +1,21 @@
+# Copy to terraform.tfvars (gitignored) and edit as needed, or override
+# any of these with -var/-var-file on the command line. Every value
+# here has a working default in variables.tf; this file only documents
+# what is commonly changed.
+
+aws_region   = "ap-northeast-1"
+project_name = "medical-guideline-rag"
+
+# Leave unset (or delete this line) to keep the ALB HTTP-only. Set once
+# you own a domain with a Route53 hosted zone already created in this
+# account - see docs/deployment-guide.md.
+# domain_name = "example.com"
+
+# Must match the GitHub repository this Terraform-managed OIDC deploy
+# role should trust (see iam.tf).
+github_repository = "ToruCode/medical-guideline-rag"
+
+# Switch to "openai" only after putting a real key into the
+# llm_api_key Secrets Manager secret (see docs/deployment-guide.md) -
+# it is created with a placeholder value.
+llm_provider = "fake"
