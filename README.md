@@ -135,7 +135,7 @@ K --> L[Grounded Answer with Citations]
 | Framework | FastAPI |
 | Embedding | Sentence Transformers (intfloat/multilingual-e5-base) |
 | LLM | OpenAI GPT-4o-mini |
-| Vector Store | In-memory Vector Store |
+| Vector Store | In-memory (default) or Qdrant (embedded/local mode, persistent) |
 | API Docs | Swagger UI |
 | Dependency | uv |
 | Testing | pytest |
@@ -187,10 +187,13 @@ live end-to-end test of the full stack with both real adapters
 (see [Live end-to-end verification](#live-end-to-end-verification-real-embedding--llm)
 below), release readiness: a working `Dockerfile`/`docker compose`
 setup (see [Docker](#docker)), an MIT [License](#license), and a
-GitHub Actions CI workflow, and a minimal Streamlit demo UI
+GitHub Actions CI workflow, a minimal Streamlit demo UI
 (Issue #13) for the question-answering flow (see
-[Streamlit demo UI](#streamlit-demo-ui) below). No concrete vector
-database adapter is implemented yet.
+[Streamlit demo UI](#streamlit-demo-ui) below), and a persistent
+`QdrantVectorStore` option (Issue #17, embedded/local mode) selectable
+alongside the still-default `InMemoryVectorStore`, with a
+`scripts/index_documents.py --rebuild` CLI for bulk-indexing and
+explicit rebuilds (see [Vector store](#vector-store) above).
 
 ## Requirements
 
@@ -368,14 +371,63 @@ implementation's responsibility. `Chunk` exposes a computed `chunk_id`
 property (`document_id:page_number:chunk_index`) used as a stable
 identifier for upsert/deduplication.
 
-No concrete vector database adapter (Qdrant, pgvector, Chroma) is
-implemented yet. A deterministic, dependency-free implementation,
-`app.infrastructure.vector_store.in_memory_vector_store.InMemoryVectorStore`,
-is used both by tests and as the FastAPI app's default dependency
-wiring (see [API](#api) below); its data does not survive a process
-restart. See `docs/adr/0006-vector-store-strategy.md` for the
-reasoning, including why `upsert` (not `add`) was chosen and the
-`score` convention.
+Two `VectorStore` implementations exist, selected via
+`Settings.vector_store_provider` (`app/api/dependencies.py::get_vector_store`):
+
+- `"memory"` (default) - `app.infrastructure.vector_store.in_memory_vector_store.InMemoryVectorStore`,
+  a deterministic, dependency-free implementation used both by tests
+  and as the FastAPI app's default dependency wiring. Its data does not
+  survive a process restart.
+- `"qdrant"` - `app.infrastructure.vector_store.qdrant_vector_store.QdrantVectorStore`,
+  backed by Qdrant's embedded/local mode (`qdrant_client.QdrantClient(path=...)`)
+  - no separate Qdrant server process, no network. Data persists under
+  `MEDICAL_RAG_VECTOR_STORE_PATH` (default `./qdrant_storage`, already
+  gitignored) across restarts. See "Persistent vector store" below and
+  `docs/adr/0026-persistent-vector-store.md` for the full reasoning,
+  including point ID derivation, dimension-mismatch detection across a
+  restart, and `--rebuild`.
+
+See `docs/adr/0006-vector-store-strategy.md` for the shared reasoning
+behind the `VectorStore` Protocol itself, including why `upsert` (not
+`add`) was chosen and the `score` convention both implementations
+follow.
+
+### Persistent vector store
+
+Set `MEDICAL_RAG_VECTOR_STORE_PROVIDER=qdrant` (see `.env.example`) to
+persist indexed chunks under `MEDICAL_RAG_VECTOR_STORE_PATH` instead of
+losing them on every restart. `POST /documents/index` works unchanged
+against either provider.
+
+To bulk-index local PDFs into the persistent store from the command
+line (rather than one file at a time via the API), use
+`scripts/index_documents.py`:
+
+```bash
+# Index every *.pdf under data/raw/ (default), reusing the existing
+# persistent index (re-indexing the same file updates it in place).
+uv run python -m scripts.index_documents
+
+# Index specific files instead.
+uv run python -m scripts.index_documents data/raw/guideline_a.pdf
+
+# Discard the existing persistent index first, then index from scratch -
+# e.g. after changing embedding_provider/embedding_model_name, since old
+# and new vectors would otherwise have incompatible dimensions.
+uv run python -m scripts.index_documents --rebuild
+```
+
+This script requires `MEDICAL_RAG_VECTOR_STORE_PROVIDER=qdrant` (it
+refuses to run under `"memory"`, since anything it indexed would be
+discarded the instant the one-shot process exits). Only one process may
+hold `MEDICAL_RAG_VECTOR_STORE_PATH` open at a time - run this script
+before starting (or after stopping) the FastAPI app if they would
+otherwise point at the same path.
+
+`MEDICAL_RAG_VECTOR_STORE_PATH` must never be committed and must be
+dedicated to this one collection (`--rebuild` deletes the entire
+directory, not just one collection's data) - see
+`docs/adr/0026-persistent-vector-store.md`.
 
 ## Indexing pipeline
 
@@ -508,13 +560,14 @@ them into Application services; endpoint modules never import
 Infrastructure directly. `get_passage_embedder`/`get_query_embedder`/
 `get_vector_store`/`get_llm` are process-wide singletons, so a document
 indexed via `POST /documents/index` is searchable via
-`POST /questions/ask` for the life of the running process (data is
-lost on restart). Neither endpoint logs question text, guideline
-passage text, generated answer text, or embedding vectors - only
-counts, file names, and outcome flags.
+`POST /questions/ask` for the life of the running process. Neither
+endpoint logs question text, guideline passage text, generated answer
+text, or embedding vectors - only counts, file names, and outcome flags.
 
-There is no concrete vector database adapter yet (`InMemoryVectorStore`
-remains the only `VectorStore`). Swagger UI at `/docs` can exercise
+`InMemoryVectorStore` remains the default `VectorStore` (data is lost
+on restart); set `MEDICAL_RAG_VECTOR_STORE_PROVIDER=qdrant` for a
+persistent, on-disk alternative that survives a restart - see
+"Persistent vector store" above. Swagger UI at `/docs` can exercise
 both endpoints directly, including file upload, regardless of which
 providers are configured.
 

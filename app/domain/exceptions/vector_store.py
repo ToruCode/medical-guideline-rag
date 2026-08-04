@@ -15,3 +15,9 @@ class InvalidTopKError(VectorStoreError):
 
 class VectorDimensionMismatchError(VectorStoreError):
     """Raised when a vector's dimension does not match the store's established dimension."""
+
+
+class VectorStoreUnavailableError(VectorStoreError):
+    """Raised when a persistent vector store cannot be opened (e.g. a locked or
+    corrupted on-disk index), as distinct from a structurally invalid request.
+    """

@@ -170,8 +170,9 @@ inward.
     embedder output into domain-level errors.
   - `app/domain/exceptions/vector_store.py` defines `VectorStoreError`
     and its subtypes (`InvalidSearchQueryError`, `InvalidTopKError`,
-    `VectorDimensionMismatchError`) used to translate invalid
-    storage/search input into domain-level errors.
+    `VectorDimensionMismatchError`, `VectorStoreUnavailableError`) used
+    to translate invalid storage/search input, and a persistent store
+    that cannot be opened, into domain-level errors.
   - `app/domain/exceptions/retrieval.py` defines `RetrievalError` and
     its subtype `EmptyQueryError`, raised when a natural-language query
     is empty or whitespace-only, distinct from
@@ -203,11 +204,29 @@ inward.
     (`InMemoryVectorStore`) are deterministic, dependency-free
     implementations of `Embedder`/`Llm`/`VectorStore` with no network
     access. They are used both by tests and as the FastAPI app's
-    default (`"fake"` provider) dependency wiring
+    default (`"fake"`/`"memory"` provider) dependency wiring
     (`app/api/dependencies.py`). Moved here from `tests/support/` in
     Issue #11; see `docs/adr/0010-fastapi-rag-api.md` for why (they
     must be importable from application code shipped in the built
     package, which `tests/support/` is not).
+  - `app/infrastructure/vector_store/qdrant_vector_store.py` defines
+    `QdrantVectorStore`, a persistent `VectorStore` implementation
+    backed by Qdrant's embedded/local mode
+    (`qdrant_client.QdrantClient(path=...)` - no server process, no
+    network). Selected via `Settings.vector_store_provider = "qdrant"`.
+    Derives Qdrant point IDs from `Chunk.chunk_id` via `uuid.uuid5` (a
+    Qdrant point ID must be a UUID or integer, never an arbitrary
+    string), creates its collection lazily on the first `upsert()` once
+    the embedding dimension is known (mirroring `InMemoryVectorStore`'s
+    lazy dimension learning), and validates every call against the
+    dimension of an already-existing on-disk collection so a mismatch
+    across a process restart raises the same `VectorDimensionMismatchError`
+    `InMemoryVectorStore` raises. A locked or corrupted on-disk store
+    raises the new `VectorStoreUnavailableError`
+    (`app/domain/exceptions/vector_store.py`), which the API layer
+    already maps to 500 via its existing broad `VectorStoreError`
+    handling (no endpoint code changed). See
+    `docs/adr/0026-persistent-vector-store.md`.
   - `app/infrastructure/embedding/sentence_transformer_embedder.py`
     defines `SentenceTransformerEmbedder`, implementing `Embedder` over
     a local `sentence-transformers` model, prepending a configurable
@@ -250,6 +269,12 @@ inward.
     whole `Settings` object is), and `Settings.llm_timeout_seconds`
     (default `30.0`) select and configure the `Llm` implementation. See
     `docs/adr/0011-real-embedding-and-llm-adapters.md`.
+  - `Settings.vector_store_provider` (`Literal["memory", "qdrant"]`,
+    default `"memory"`), `Settings.vector_store_path` (default
+    `./qdrant_storage`), and `Settings.vector_store_collection_name`
+    (default `guideline_chunks`) select and configure the `VectorStore`
+    implementation `app/api/dependencies.py` constructs. See
+    `docs/adr/0026-persistent-vector-store.md`.
 
 ## Dependency Rule
 
@@ -277,9 +302,12 @@ model and OpenAI's Chat Completions API), selectable via
 `Settings.embedding_provider`/`llm_provider` alongside the still-default
 Fake implementations, and an opt-in live end-to-end test
 (Issue #13, `tests/integration/test_live_rag_e2e.py`) verifying the
-full index-then-ask flow with both real adapters together. There is no
-concrete vector database adapter (Qdrant/pgvector) yet; that lands in a
-subsequent issue.
+full index-then-ask flow with both real adapters together, and a
+persistent vector store option (Issue #17: `QdrantVectorStore`, backed
+by Qdrant's embedded/local mode, selectable via
+`Settings.vector_store_provider = "qdrant"` alongside the still-default
+`InMemoryVectorStore`) with a `scripts/index_documents.py --rebuild`
+CLI for bulk-indexing and explicit index rebuilds.
 
 See `docs/adr/0001-project-architecture.md`,
 `docs/adr/0002-configuration-and-logging.md`,
@@ -291,6 +319,7 @@ See `docs/adr/0001-project-architecture.md`,
 `docs/adr/0008-retrieval-strategy.md`,
 `docs/adr/0009-generation-strategy.md`,
 `docs/adr/0010-fastapi-rag-api.md`,
-`docs/adr/0011-real-embedding-and-llm-adapters.md`, and
-`docs/adr/0012-live-e2e-verification.md` for the architecture decision
+`docs/adr/0011-real-embedding-and-llm-adapters.md`,
+`docs/adr/0012-live-e2e-verification.md`, and
+`docs/adr/0026-persistent-vector-store.md` for the architecture decision
 records.
