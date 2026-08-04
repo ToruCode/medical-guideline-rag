@@ -51,6 +51,7 @@ from app.infrastructure.llm.openai_llm import OpenAiLlm
 from app.infrastructure.pdf.pymupdf_loader import PyMuPdfLoader
 from app.infrastructure.pdf.pypdf_loader import PypdfLoader
 from app.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
+from app.infrastructure.vector_store.qdrant_vector_store import QdrantVectorStore
 
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
@@ -119,12 +120,26 @@ def get_query_embedder() -> Embedder:
 
 @lru_cache
 def get_vector_store() -> VectorStore:
-    """Process-wide InMemoryVectorStore instance, shared by both endpoints.
+    """Process-wide VectorStore instance, shared by both endpoints, selected
+    by Settings.vector_store_provider.
 
-    Data does not survive a process restart. No real vector database
-    adapter exists yet (see docs/adr/0006-vector-store-strategy.md).
+    "memory" (default) returns an InMemoryVectorStore; its data does not
+    survive a process restart. "qdrant" returns a QdrantVectorStore backed
+    by Settings.vector_store_path, which does. This provider never
+    rebuilds an existing "qdrant" store on its own - that is an explicit,
+    operator-initiated action (scripts/index_documents.py --rebuild), never
+    something the API triggers automatically. See
+    docs/adr/0026-persistent-vector-store.md.
     """
-    return InMemoryVectorStore()
+    settings = get_settings()
+    if settings.vector_store_provider == "memory":
+        return InMemoryVectorStore()
+    if settings.vector_store_provider == "qdrant":
+        return QdrantVectorStore(
+            path=settings.vector_store_path,
+            collection_name=settings.vector_store_collection_name,
+        )
+    raise ValueError(f"Unknown vector_store_provider: {settings.vector_store_provider!r}")
 
 
 @lru_cache

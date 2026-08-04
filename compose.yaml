@@ -13,9 +13,16 @@ services:
       # re-download the model every time. Harmless and unused while the
       # "fake" provider (the default) is configured.
       - hf_cache:/root/.cache/huggingface
+      # Persists MEDICAL_RAG_VECTOR_STORE_PATH's default
+      # (./qdrant_storage, resolved relative to WORKDIR /app) across
+      # container recreation when MEDICAL_RAG_VECTOR_STORE_PROVIDER=qdrant.
+      # Harmless and unused while "memory" (the default) is configured.
+      # See docs/adr/0026-persistent-vector-store.md.
+      - qdrant_storage:/app/qdrant_storage
 
-  # qdrant and postgres services will be added once the corresponding
-  # infrastructure integrations are implemented (see docs/architecture.md).
+  # postgres will be added once the corresponding infrastructure
+  # integration is implemented (see docs/architecture.md).
 
 volumes:
   hf_cache:
+  qdrant_storage:

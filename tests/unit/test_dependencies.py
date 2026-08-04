@@ -7,6 +7,7 @@ monkeypatched where needed, and constructing an OpenAI client (unlike
 calling it) performs no network I/O.
 """
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,6 +19,8 @@ from app.infrastructure.llm.fake_llm import FakeLlm
 from app.infrastructure.llm.openai_llm import OpenAiLlm
 from app.infrastructure.pdf.pymupdf_loader import PyMuPdfLoader
 from app.infrastructure.pdf.pypdf_loader import PypdfLoader
+from app.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
+from app.infrastructure.vector_store.qdrant_vector_store import QdrantVectorStore
 
 
 def test_get_passage_embedder_returns_fake_embedder_by_default() -> None:
@@ -125,6 +128,34 @@ def test_get_pdf_loader_raises_for_unknown_extractor() -> None:
 
     with pytest.raises(ValueError, match="Unknown pdf_extractor"):
         dependencies.get_pdf_loader(_FakeSettingsWithUnknownExtractor())  # type: ignore[arg-type]
+
+
+def test_get_vector_store_returns_in_memory_vector_store_by_default() -> None:
+    vector_store = dependencies.get_vector_store()
+
+    assert isinstance(vector_store, InMemoryVectorStore)
+
+
+def test_get_vector_store_with_qdrant_provider_returns_qdrant_vector_store(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MEDICAL_RAG_VECTOR_STORE_PROVIDER", "qdrant")
+    monkeypatch.setenv("MEDICAL_RAG_VECTOR_STORE_PATH", str(tmp_path / "qdrant"))
+
+    vector_store = dependencies.get_vector_store()
+
+    assert isinstance(vector_store, QdrantVectorStore)
+    vector_store.close()
+
+
+def test_get_vector_store_raises_for_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeSettingsWithUnknownProvider:
+        vector_store_provider = "not-a-real-provider"
+
+    monkeypatch.setattr(dependencies, "get_settings", lambda: _FakeSettingsWithUnknownProvider())
+
+    with pytest.raises(ValueError, match="Unknown vector_store_provider"):
+        dependencies.get_vector_store()
 
 
 def test_get_generate_answer_service_uses_configured_context_max_chars(

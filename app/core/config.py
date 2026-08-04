@@ -65,6 +65,16 @@ class Settings(BaseSettings):
     # imports Application/Domain/Infrastructure code directly - see
     # docs/adr/0024-streamlit-demo-ui.md.
     ui_api_base_url: str = "http://127.0.0.1:8000"
+    # "memory" (default, process-only, cleared on restart - used by tests
+    # and local experimentation) or "qdrant" (persists to vector_store_path
+    # via Qdrant's embedded/local mode, no server process required). See
+    # docs/adr/0026-persistent-vector-store.md.
+    vector_store_provider: Literal["memory", "qdrant"] = "memory"
+    # Local filesystem directory Qdrant's embedded client stores data in.
+    # Only used when vector_store_provider="qdrant". Matches the
+    # already-gitignored qdrant_storage/ entry - never commit its contents.
+    vector_store_path: str = "./qdrant_storage"
+    vector_store_collection_name: str = "guideline_chunks"
 
 
 @lru_cache
