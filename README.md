@@ -44,6 +44,7 @@ This project demonstrates:
 - Setup
 - Docker
 - API
+- Streamlit Demo UI
 - Live End-to-End Verification
 - Retrieval Evaluation
 - Real-Data Retrieval Baseline
@@ -163,6 +164,9 @@ K --> L[Grounded Answer with Citations]
   decision - see [Project layout](#project-layout).
 - Runnable locally with `uv` or in a container with Docker Compose -
   see [Setup](#setup) and [Docker](#docker).
+- A minimal Streamlit demo UI for asking a question and inspecting the
+  answer/citations without Swagger UI - see
+  [Streamlit demo UI](#streamlit-demo-ui).
 
 ## Status
 
@@ -179,11 +183,13 @@ document indexing and question answering end to end, real
 model and OpenAI's Chat Completions API), selectable alongside the
 still-default Fake implementations via `Settings`, a verified, opt-in
 live end-to-end test of the full stack with both real adapters
-(Issue #13; see [Live end-to-end verification](#live-end-to-end-verification-real-embedding--llm)
-below), and release readiness (Issue #14): a working `Dockerfile`/
-`docker compose` setup (see [Docker](#docker)), an MIT
-[License](#license), and a GitHub Actions CI workflow. No concrete
-vector database adapter is implemented yet.
+(see [Live end-to-end verification](#live-end-to-end-verification-real-embedding--llm)
+below), release readiness: a working `Dockerfile`/`docker compose`
+setup (see [Docker](#docker)), an MIT [License](#license), and a
+GitHub Actions CI workflow, and a minimal Streamlit demo UI
+(Issue #13) for the question-answering flow (see
+[Streamlit demo UI](#streamlit-demo-ui) below). No concrete vector
+database adapter is implemented yet.
 
 ## Requirements
 
@@ -510,6 +516,63 @@ There is no concrete vector database adapter yet (`InMemoryVectorStore`
 remains the only `VectorStore`). Swagger UI at `/docs` can exercise
 both endpoints directly, including file upload, regardless of which
 providers are configured.
+
+## Streamlit demo UI
+
+`app/ui/streamlit_app.py` is a minimal Streamlit UI for
+`POST /questions/ask`, for trying the question-answering flow without
+Swagger UI. It is presentation-only: it never imports Application/
+Domain/Infrastructure code or calls OpenAI directly, and instead
+speaks HTTP to an already-running API server via
+`app.ui.api_client.QuestionApiClient`. See
+`docs/adr/0024-streamlit-demo-ui.md` for the full design reasoning,
+including why this must be an HTTP client rather than a second
+in-process service graph (`InMemoryVectorStore` is process-wide - see
+[Vector store](#vector-store) - so the UI must query the same running
+API process that documents were indexed into, not build its own).
+
+The UI does **not** support uploading or indexing documents (out of
+scope for this issue); index a document first via
+`POST /documents/index` (Swagger UI or `curl`) against the same
+running API server the UI is pointed at.
+
+**1. Start the API server** (Fake providers work out of the box, no
+API key required):
+
+```bash
+make dev
+```
+
+**2. Index at least one document** via `http://127.0.0.1:8000/docs`
+(`POST /documents/index`) - any self-authored, non-confidential sample
+PDF (see `data/sample/README.md`).
+
+**3. In a second terminal, start the UI:**
+
+```bash
+make ui
+```
+
+Open the URL Streamlit prints (typically `http://localhost:8501`).
+`MEDICAL_RAG_UI_API_BASE_URL` (default `http://127.0.0.1:8000`, see
+`.env.example`) controls which API server the UI talks to; change it
+if the API runs on a different host or port.
+
+**4. Ask a question.** The UI always shows a fixed disclaimer that
+this is a demonstration, not medical advice, and that the original
+guideline and current clinical information should be checked. A
+generated answer is shown together with an expandable citations
+section (source, page number, chunk index, score, and a short text
+preview - never the full guideline text). When no relevant passage was
+retrieved, a dedicated Japanese "insufficient evidence" notice is
+shown instead of an answer. Connection failures, invalid input, and
+API/LLM errors are shown as short, safe Japanese messages
+(`app/ui/presentation.py::describe_error`) - never a stack trace, API
+key, prompt, or internal path.
+
+**Screenshot:** *(not included - add one here if useful, but only a
+self-authored, non-confidential sample document's output; never a
+screenshot containing real or copyrighted guideline text.)*
 
 ## Live end-to-end verification (real Embedding + LLM)
 

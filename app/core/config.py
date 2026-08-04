@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     # rather than a token count - see
     # docs/adr/0022-context-length-control-and-llm-error-handling.md.
     llm_context_max_chars: int = 6000
+    # Base URL of the running FastAPI server that the Streamlit demo UI
+    # (app/ui/streamlit_app.py) sends questions to over HTTP. The UI never
+    # imports Application/Domain/Infrastructure code directly - see
+    # docs/adr/0024-streamlit-demo-ui.md.
+    ui_api_base_url: str = "http://127.0.0.1:8000"
 
 
 @lru_cache
