@@ -233,21 +233,29 @@ below - a real exported shell variable still takes precedence over
 
 ## Docker
 
+Brings up the API and the Streamlit demo UI together, backed by a
+persistent vector store - see
+`docs/adr/0027-docker-compose-integrated-stack.md` for the full design
+reasoning behind what follows.
+
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-`docker compose` requires `.env` to already exist (it is passed to the
-container via `env_file`); running it before `cp .env.example .env`
-fails with a missing-file error. Once running, the API is reachable at
-`http://localhost:8000` exactly as with `make dev` - `/docs` for
-Swagger UI, `GET /api/v1/health` directly, etc.
+`docker compose` requires `.env` to already exist (it is passed to
+both services via `env_file`); running it before `cp .env.example
+.env` fails with a missing-file error. Once running:
+
+- the API is reachable at `http://localhost:8000` exactly as with
+  `make dev` - `/docs` for Swagger UI, `GET /api/v1/health` directly,
+  etc.
+- the Streamlit demo UI is reachable at `http://localhost:8501`.
 
 The image (`Dockerfile`) installs `sentence-transformers`/`openai` the
 same as a local `uv sync` (see [Setup](#setup)); by default it still
 runs with the Fake providers, so no model download or API key is
-required just to start the container. If you switch
+required just to start the stack. If you switch
 `MEDICAL_RAG_EMBEDDING_PROVIDER=sentence_transformers` in `.env`, the
 model downloads on first use into a named volume (`hf_cache`, mounted
 at `/root/.cache/huggingface`), so it is **not** re-downloaded every
@@ -257,11 +265,105 @@ removed (`docker compose down -v`).
 `compose.yaml` runs the image as built (no source bind-mount); it is
 meant to run the same thing you would deploy, not as a hot-reload dev
 loop. For local development with auto-reload on file changes, use
-`make dev` (plain `uv`) instead - see
-[Development commands](#development-commands) below. A `HEALTHCHECK`
-in the `Dockerfile` calls `GET /api/v1/health` every 30 seconds;
-`docker ps`/`docker compose ps` reports the container as `healthy` once
-the first check passes.
+`make dev`/`make ui` (plain `uv`) instead - see
+[Development commands](#development-commands) below.
+
+### Services
+
+`compose.yaml` defines two services, both built from the same
+`Dockerfile` (no second Dockerfile - the UI service just overrides
+`command:`):
+
+- **`app`** - the FastAPI server (`uvicorn`, port `8000`). A
+  `HEALTHCHECK` in the `Dockerfile` calls `GET /api/v1/health` every
+  30 seconds; `docker compose ps` reports it `healthy` once the first
+  check passes.
+- **`ui`** - the Streamlit demo UI (port `8501`), reached by the
+  browser directly, and reaching `app` over the Compose network as
+  `http://app:8000` (overridden in `compose.yaml`, not `.env`). It
+  waits for `app` to be `healthy` (`depends_on`) before starting, and
+  has its own healthcheck against Streamlit's `/_stcore/health`.
+
+There is deliberately **no separate Qdrant container**. The persistent
+vector store (`MEDICAL_RAG_VECTOR_STORE_PROVIDER=qdrant`) uses
+Qdrant's embedded/local mode - an in-process store backed by a local
+directory, not a server - so `compose.yaml` only needs a named volume
+(`qdrant_storage`, mounted into `app`) for it to survive `docker
+compose down`/recreation. `compose.yaml` sets
+`MEDICAL_RAG_VECTOR_STORE_PROVIDER=qdrant` on the `app` service
+regardless of what `.env` says (`.env.example`'s own default stays
+`memory`, for tests/CI - see [Persistent vector store](#vector-store)
+and `docs/adr/0026-persistent-vector-store.md`), so this stack always
+persists what it indexes across restarts.
+
+### Initial indexing
+
+The stack starts with an empty index. To index PDFs for the first
+time:
+
+1. Place one or more PDFs under `data/raw/` on the host (already
+   gitignored; use a self-authored, non-confidential sample - see
+   `data/sample/README.md`). `compose.yaml` bind-mounts `./data` into
+   the `app` container, so no image rebuild is needed.
+2. Make sure `app` is **not** currently running - Qdrant's embedded
+   mode only allows one process to hold `MEDICAL_RAG_VECTOR_STORE_PATH`
+   open at a time, so indexing and a running `app` container cannot
+   point at the same path concurrently (`docker compose down`, or
+   simply don't `up` yet).
+3. Run the indexing script inside a one-off container:
+
+   ```bash
+   docker compose run --rm app uv run --frozen --no-dev python -m scripts.index_documents
+   ```
+
+4. Start (or restart) the stack normally:
+
+   ```bash
+   docker compose up
+   ```
+
+The indexed chunks now persist in the `qdrant_storage` volume; ask
+questions via the UI (`http://localhost:8501`) or `POST
+/api/v1/questions/ask`.
+
+### Re-indexing (`--rebuild`)
+
+Re-running the same command as above (without `--rebuild`) is safe at
+any time - `scripts/index_documents.py` re-indexes by `chunk_id`, so a
+changed PDF's chunks are updated in place rather than duplicated. A
+full `--rebuild` (discard the existing index, then re-index from
+scratch) is only needed when the *embedding itself* is no longer
+compatible with what's stored - most commonly after changing
+`MEDICAL_RAG_EMBEDDING_PROVIDER`/`MEDICAL_RAG_EMBEDDING_MODEL_NAME` in
+`.env`, since old and new vectors can have different dimensions:
+
+```bash
+# Stop app first (same one-process-per-path constraint as above)
+docker compose down
+docker compose run --rm app uv run --frozen --no-dev python -m scripts.index_documents --rebuild
+docker compose up
+```
+
+`--rebuild` deletes the **entire** `MEDICAL_RAG_VECTOR_STORE_PATH`
+directory, not just one collection's data - see
+`docs/adr/0026-persistent-vector-store.md` before using it if you have
+indexed data you want to keep.
+
+### Switching back to the in-memory provider
+
+For a lightweight demo where persistence isn't needed, remove (or
+comment out) the `MEDICAL_RAG_VECTOR_STORE_PROVIDER: qdrant`
+`environment:` override on the `app` service in `compose.yaml` - the
+stack then falls back to `.env`'s own value, `memory` by default, and
+indexed chunks are lost whenever `app` restarts (as documented in
+[Vector store](#vector-store) above).
+
+### Stopping the stack
+
+```bash
+docker compose down      # stop and remove containers, keep volumes
+docker compose down -v   # also remove hf_cache and qdrant_storage - deletes the index
+```
 
 ## Development commands
 

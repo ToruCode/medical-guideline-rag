@@ -3,6 +3,13 @@ services:
     build: .
     env_file:
       - .env
+    environment:
+      # Overrides .env.example's own default ("memory", kept for tests/
+      # CI - see docs/adr/0026-persistent-vector-store.md) so this
+      # Compose stack always persists to the qdrant_storage volume
+      # below. Local `make dev`/`uv run` usage is unaffected; only this
+      # container's provider is forced to "qdrant".
+      MEDICAL_RAG_VECTOR_STORE_PROVIDER: qdrant
     ports:
       - "8000:8000"
     volumes:
@@ -15,10 +22,55 @@ services:
       - hf_cache:/root/.cache/huggingface
       # Persists MEDICAL_RAG_VECTOR_STORE_PATH's default
       # (./qdrant_storage, resolved relative to WORKDIR /app) across
-      # container recreation when MEDICAL_RAG_VECTOR_STORE_PROVIDER=qdrant.
-      # Harmless and unused while "memory" (the default) is configured.
-      # See docs/adr/0026-persistent-vector-store.md.
+      # container recreation. See docs/adr/0026-persistent-vector-store.md.
       - qdrant_storage:/app/qdrant_storage
+      # Bind-mounts the local data/ directory (already gitignored) so
+      # PDFs placed under data/raw/ can be indexed inside the container
+      # without rebuilding the image - see the "Docker" section in
+      # README.md for the indexing command.
+      - ./data:/app/data
+
+  # Streamlit demo UI (app/ui/streamlit_app.py). Reuses the app image
+  # as-is (no second Dockerfile) with the command overridden; talks to
+  # the "app" service only over HTTP, exactly like a locally-run `make
+  # ui` talks to `make dev` - see docs/adr/0024-streamlit-demo-ui.md.
+  ui:
+    build: .
+    # --frozen --no-dev matches the image's own build step - without
+    # them, `uv run` re-syncs against the dev-included dependency group
+    # on every start, re-downloading mypy/ruff/reportlab/etc. See
+    # Dockerfile.
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - streamlit
+      - run
+      - app/ui/streamlit_app.py
+      - --server.address
+      - 0.0.0.0
+    env_file:
+      - .env
+    environment:
+      # Reach "app" by its Compose service name/network, not the
+      # 127.0.0.1 default meant for local, same-host `make ui`.
+      MEDICAL_RAG_UI_API_BASE_URL: http://app:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      app:
+        condition: service_healthy
+    # The image's own HEALTHCHECK (Dockerfile) polls the FastAPI health
+    # endpoint on :8000, which this container does not serve - override
+    # it with Streamlit's own health endpoint instead.
+    healthcheck:
+      test: ["CMD", "uv", "run", "--frozen", "--no-dev", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
 
   # postgres will be added once the corresponding infrastructure
   # integration is implemented (see docs/architecture.md).
