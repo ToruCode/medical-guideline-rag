@@ -110,6 +110,11 @@ class AnswerCaseResult:
     citations_consistent: bool
     latency_seconds: float
     answer_preview: str
+    # Optional, free-form dataset metadata (Issue #15) - never affects any
+    # metric above; carried through only so scripts/evaluation_dashboard_core.py
+    # can filter by it. None when the dataset case did not define it.
+    category: str | None = None
+    difficulty: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +195,8 @@ def evaluate_answer_case(
         citations_consistent=citations_are_subset_of_retrieved(result.citations, search_results),
         latency_seconds=latency_seconds,
         answer_preview=truncate_text(result.answer),
+        category=case.category,
+        difficulty=case.difficulty,
     )
 
 
@@ -326,42 +333,46 @@ def print_aggregate_report(aggregate: AnswerAggregate, config: AnswerRunConfig) 
     print(f"  (over {config.case_count} questions)")
 
 
-def print_failure_analysis(case_results: list[AnswerCaseResult]) -> None:
-    """Prints only the cases with a citation-consistency violation, an
-    insufficient-evidence mismatch, citation_recall < 1.0, or
-    answer_point_coverage < 1.0 (Issue #10's "failure analysis"
-    requirement), instead of repeating every passing case.
+def failure_reasons(case_result: AnswerCaseResult) -> list[str]:
+    """Returns every failure reason that applies to case_result, or an
+    empty list if it passed every check.
+
+    The four checks below (citation-consistency violation,
+    insufficient-evidence mismatch, citation_recall < 1.0,
+    answer_point_coverage < 1.0) are Issue #10's "failure analysis"
+    criteria. Extracted as its own function (Issue #15) so
+    print_failure_analysis() and scripts/evaluation_dashboard_core.py's
+    failure-category filtering share exactly one definition of
+    "failure" instead of duplicating this logic.
     """
-    failures = [
-        case_result
-        for case_result in case_results
-        if not case_result.citations_consistent
-        or not case_result.insufficient_evidence_correct
-        or (case_result.citation_recall is not None and case_result.citation_recall < 1.0)
-        or (
-            case_result.answer_point_coverage is not None
-            and case_result.answer_point_coverage < 1.0
-        )
-    ]
+    reasons = []
+    if not case_result.citations_consistent:
+        reasons.append("citation_consistency_violation")
+    if not case_result.insufficient_evidence_correct:
+        reasons.append("insufficient_evidence_mismatch")
+    if case_result.citation_recall is not None and case_result.citation_recall < 1.0:
+        reasons.append("citation_recall<1.0")
+    if case_result.answer_point_coverage is not None and case_result.answer_point_coverage < 1.0:
+        reasons.append("answer_point_coverage<1.0")
+    return reasons
+
+
+def is_failure_case(case_result: AnswerCaseResult) -> bool:
+    return bool(failure_reasons(case_result))
+
+
+def print_failure_analysis(case_results: list[AnswerCaseResult]) -> None:
+    """Prints only the failing cases (per is_failure_case()), instead of
+    repeating every passing case.
+    """
+    failures = [case_result for case_result in case_results if is_failure_case(case_result)]
     if not failures:
         print("\nNo failures detected.")
         return
 
     print(f"\nFailure analysis ({len(failures)} of {len(case_results)} cases):")
     for case_result in failures:
-        reasons = []
-        if not case_result.citations_consistent:
-            reasons.append("citation_consistency_violation")
-        if not case_result.insufficient_evidence_correct:
-            reasons.append("insufficient_evidence_mismatch")
-        if case_result.citation_recall is not None and case_result.citation_recall < 1.0:
-            reasons.append("citation_recall<1.0")
-        if (
-            case_result.answer_point_coverage is not None
-            and case_result.answer_point_coverage < 1.0
-        ):
-            reasons.append("answer_point_coverage<1.0")
-        print(f"  - {case_result.question}: {', '.join(reasons)}")
+        print(f"  - {case_result.question}: {', '.join(failure_reasons(case_result))}")
 
 
 def write_local_report(

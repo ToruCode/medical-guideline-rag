@@ -68,3 +68,36 @@ def test_load_dataset_parses_expected_insufficient_evidence(tmp_path: Path) -> N
     _, cases = load_dataset(dataset_path)
 
     assert cases[0].expected_insufficient_evidence is True
+
+
+def test_load_dataset_parses_category_and_difficulty(tmp_path: Path) -> None:
+    dataset_path = _write_dataset(
+        tmp_path,
+        [
+            {
+                "question": "q1",
+                "granularity": "page",
+                "expected": [1],
+                "category": "dosage",
+                "difficulty": "easy",
+            }
+        ],
+    )
+
+    _, cases = load_dataset(dataset_path)
+
+    assert cases[0].category == "dosage"
+    assert cases[0].difficulty == "easy"
+
+
+def test_load_dataset_defaults_category_and_difficulty_to_none_when_absent(
+    tmp_path: Path,
+) -> None:
+    dataset_path = _write_dataset(
+        tmp_path, [{"question": "q1", "granularity": "page", "expected": [1]}]
+    )
+
+    _, cases = load_dataset(dataset_path)
+
+    assert cases[0].category is None
+    assert cases[0].difficulty is None
