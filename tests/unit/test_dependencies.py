@@ -19,6 +19,7 @@ from app.infrastructure.llm.fake_llm import FakeLlm
 from app.infrastructure.llm.openai_llm import OpenAiLlm
 from app.infrastructure.pdf.pymupdf_loader import PyMuPdfLoader
 from app.infrastructure.pdf.pypdf_loader import PypdfLoader
+from app.infrastructure.storage.s3_object_storage import S3ObjectStorage
 from app.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 from app.infrastructure.vector_store.qdrant_vector_store import QdrantVectorStore
 
@@ -156,6 +157,49 @@ def test_get_vector_store_raises_for_unknown_provider(monkeypatch: pytest.Monkey
 
     with pytest.raises(ValueError, match="Unknown vector_store_provider"):
         dependencies.get_vector_store()
+
+
+def test_get_object_storage_with_local_provider_raises() -> None:
+    """storage_provider="local" (the default) has no ObjectStorage
+    implementation - POST /documents/index never uses one. See
+    docs/adr/0028-s3-document-storage.md.
+    """
+    with pytest.raises(ValueError, match="MEDICAL_RAG_STORAGE_PROVIDER=local"):
+        dependencies.get_object_storage()
+
+
+def test_get_object_storage_with_s3_provider_and_no_bucket_name_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEDICAL_RAG_STORAGE_PROVIDER", "s3")
+
+    with pytest.raises(ValueError, match="MEDICAL_RAG_S3_BUCKET_NAME"):
+        dependencies.get_object_storage()
+
+
+def test_get_object_storage_with_s3_provider_returns_s3_object_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Constructing S3ObjectStorage only builds a boto3 client config; it
+    performs no network I/O, the same reasoning already relied on for
+    OpenAiLlm construction (see this module's docstring).
+    """
+    monkeypatch.setenv("MEDICAL_RAG_STORAGE_PROVIDER", "s3")
+    monkeypatch.setenv("MEDICAL_RAG_S3_BUCKET_NAME", "my-bucket")
+
+    object_storage = dependencies.get_object_storage()
+
+    assert isinstance(object_storage, S3ObjectStorage)
+
+
+def test_get_object_storage_raises_for_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeSettingsWithUnknownProvider:
+        storage_provider = "not-a-real-provider"
+
+    monkeypatch.setattr(dependencies, "get_settings", lambda: _FakeSettingsWithUnknownProvider())
+
+    with pytest.raises(ValueError, match="Unknown storage_provider"):
+        dependencies.get_object_storage()
 
 
 def test_get_generate_answer_service_uses_configured_context_max_chars(

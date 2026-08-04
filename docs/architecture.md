@@ -156,6 +156,11 @@ inward.
     (`generate(prompt: str) -> str`) that infrastructure LLM adapters
     implement. The domain layer never imports an LLM SDK; the caller
     is responsible for composing the full prompt string.
+  - `app/domain/ports/object_storage.py` defines the `ObjectStorage`
+    Protocol (`upload(key: str, content: bytes) -> None`,
+    `download(key: str) -> bytes`) that infrastructure object-storage
+    adapters implement. The domain layer never imports boto3 or any
+    AWS SDK. See `docs/adr/0028-s3-document-storage.md`.
   - `app/domain/exceptions/document.py` defines
     `DocumentLoadError` and its subtypes
     (`DocumentNotFoundError`, `UnsupportedDocumentTypeError`,
@@ -178,6 +183,12 @@ inward.
     is empty or whitespace-only, distinct from
     `InvalidSearchQueryError` (which concerns an already-embedded
     `query_vector`, not the raw query string).
+  - `app/domain/exceptions/storage.py` defines `ObjectStorageError` and
+    its subtypes (`ObjectNotFoundError`, `ObjectStorageUnavailableError`)
+    used to translate object-storage failures into domain-level errors.
+    Messages contain only the object key, never bucket contents,
+    credentials, or full ARNs. See
+    `docs/adr/0028-s3-document-storage.md`.
 - **Infrastructure** (`app/infrastructure`): implements domain
   interfaces using external libraries (PDF loading, embeddings, LLMs,
   Qdrant, PostgreSQL, S3).
@@ -245,6 +256,17 @@ inward.
     `SentenceTransformerEmbedder`. Selected via
     `Settings.llm_provider = "openai"`. See
     `docs/adr/0011-real-embedding-and-llm-adapters.md`.
+  - `app/infrastructure/storage/s3_object_storage.py` defines
+    `S3ObjectStorage`, implementing `ObjectStorage` over an S3 bucket
+    (`boto3.client("s3")`). Imports `boto3` lazily inside `__init__`
+    for the same reason as `OpenAiLlm`/`SentenceTransformerEmbedder`.
+    Translates `botocore.exceptions.ClientError` into
+    `ObjectNotFoundError`/`ObjectStorageUnavailableError`, never
+    exposing the bucket name or raw SDK error text. Selected via
+    `Settings.storage_provider = "s3"`. Credentials and region are
+    resolved via boto3's own standard chain (an ECS task role in AWS),
+    not a `Settings` field. See
+    `docs/adr/0028-s3-document-storage.md`.
 - **Core** (`app/core`): application settings, logging, common
   exceptions, security, shared constants.
   - `app/core/config.py` defines a `Settings` class (pydantic-settings)
@@ -275,6 +297,13 @@ inward.
     (default `guideline_chunks`) select and configure the `VectorStore`
     implementation `app/api/dependencies.py` constructs. See
     `docs/adr/0026-persistent-vector-store.md`.
+  - `Settings.storage_provider` (`Literal["local", "s3"]`, default
+    `"local"`) and `Settings.s3_bucket_name` (`str | None`, default
+    `None`) select and configure the `ObjectStorage` implementation
+    `app/api/dependencies.py` constructs. `"local"` has no
+    implementation (`get_object_storage()` raises `ValueError`) since
+    `POST /documents/index` never uses `ObjectStorage`. See
+    `docs/adr/0028-s3-document-storage.md`.
 
 ## Dependency Rule
 

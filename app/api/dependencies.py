@@ -37,6 +37,7 @@ from app.application.services.search_chunks import SearchChunksService
 from app.core.config import Settings, get_settings
 from app.domain.ports.embedder import Embedder
 from app.domain.ports.llm import Llm
+from app.domain.ports.object_storage import ObjectStorage
 from app.domain.ports.pdf_loader import PdfLoader
 from app.domain.ports.text_splitter import TextSplitter
 from app.domain.ports.vector_store import VectorStore
@@ -50,6 +51,7 @@ from app.infrastructure.llm.fake_llm import FakeLlm
 from app.infrastructure.llm.openai_llm import OpenAiLlm
 from app.infrastructure.pdf.pymupdf_loader import PyMuPdfLoader
 from app.infrastructure.pdf.pypdf_loader import PypdfLoader
+from app.infrastructure.storage.s3_object_storage import S3ObjectStorage
 from app.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 from app.infrastructure.vector_store.qdrant_vector_store import QdrantVectorStore
 
@@ -166,6 +168,35 @@ def get_llm() -> Llm:
             timeout=settings.llm_timeout_seconds,
         )
     raise ValueError(f"Unknown llm_provider: {settings.llm_provider!r}")
+
+
+@lru_cache
+def get_object_storage() -> ObjectStorage:
+    """Process-wide ObjectStorage instance, selected by Settings.storage_provider.
+
+    "local" (the default) has no implementation: PDFs never leave the
+    request's own temp file under it (see documents.py's existing
+    POST /documents/index). This provider raises ValueError in that
+    case rather than silently returning something - POST
+    /documents/upload and POST /documents/index-from-s3 require
+    storage_provider="s3" and are expected to fail fast, the same way
+    get_llm fails fast when llm_provider="openai" is selected without
+    an API key. "s3" returns an S3ObjectStorage backed by
+    Settings.s3_bucket_name. See docs/adr/0028-s3-document-storage.md.
+    """
+    settings = get_settings()
+    if settings.storage_provider == "local":
+        raise ValueError(
+            "ObjectStorage is unavailable: MEDICAL_RAG_STORAGE_PROVIDER=local "
+            "(set it to 's3' to enable S3-backed document storage)"
+        )
+    if settings.storage_provider == "s3":
+        if settings.s3_bucket_name is None:
+            raise ValueError(
+                "MEDICAL_RAG_S3_BUCKET_NAME must be set when MEDICAL_RAG_STORAGE_PROVIDER=s3"
+            )
+        return S3ObjectStorage(bucket_name=settings.s3_bucket_name)
+    raise ValueError(f"Unknown storage_provider: {settings.storage_provider!r}")
 
 
 def get_load_document_service(

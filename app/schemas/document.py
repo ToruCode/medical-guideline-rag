@@ -17,3 +17,24 @@ class IndexDocumentResponse(BaseModel):
     page_count: int
     chunk_count: int
     indexed_count: int
+
+
+class UploadDocumentResponse(BaseModel):
+    """Response body for POST /api/v1/documents/upload.
+
+    key identifies the uploaded object in the configured S3 bucket
+    (Settings.s3_bucket_name); pass it to POST
+    /api/v1/documents/index-from-s3 to index it.
+    """
+
+    key: str
+
+
+class IndexFromS3Request(BaseModel):
+    """Request body for POST /api/v1/documents/index-from-s3.
+
+    key must already exist in the configured S3 bucket - see POST
+    /api/v1/documents/upload.
+    """
+
+    key: str
