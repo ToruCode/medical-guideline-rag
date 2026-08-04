@@ -43,6 +43,7 @@ This project demonstrates:
 - Requirements
 - Setup
 - Docker
+- AWS Deployment
 - API
 - Streamlit Demo UI
 - Live End-to-End Verification
@@ -142,7 +143,9 @@ K --> L[Grounded Answer with Citations]
 | Lint | Ruff |
 | Type Check | mypy |
 | Container | Docker / Docker Compose |
-| CI | GitHub Actions |
+| CI/CD | GitHub Actions |
+| Infrastructure as Code | Terraform |
+| Cloud | AWS ECS Fargate |
 
 ## Features
 
@@ -193,7 +196,12 @@ GitHub Actions CI workflow, a minimal Streamlit demo UI
 `QdrantVectorStore` option (Issue #17, embedded/local mode) selectable
 alongside the still-default `InMemoryVectorStore`, with a
 `scripts/index_documents.py --rebuild` CLI for bulk-indexing and
-explicit rebuilds (see [Vector store](#vector-store) above).
+explicit rebuilds (see [Vector store](#vector-store) above), a Docker
+Compose integrated local stack (Issue #19) running `app` and `ui`
+together with persistent storage (see [Docker](#docker) above), and a
+production-like AWS deployment (Issue #21: S3-backed document storage,
+Terraform-provisioned ECS Fargate infrastructure, and a GitHub Actions
+CI/CD pipeline - see [AWS deployment](#aws-deployment) above).
 
 ## Requirements
 
@@ -364,6 +372,26 @@ indexed chunks are lost whenever `app` restarts (as documented in
 docker compose down      # stop and remove containers, keep volumes
 docker compose down -v   # also remove hf_cache and qdrant_storage - deletes the index
 ```
+
+## AWS deployment
+
+Beyond `docker compose` (above), the same `app`/`ui` images can be
+deployed to a production-like AWS stack - ECS Fargate, an ALB,
+EFS-persisted Qdrant, S3 for guideline PDFs, and Secrets Manager for
+the OpenAI key - provisioned with Terraform (`terraform/`) and kept
+up to date by a GitHub Actions deploy job. See
+[`docs/deployment-guide.md`](docs/deployment-guide.md) for setup,
+bootstrap, rollback, and troubleshooting instructions, and
+[`docs/adr/0029-aws-ecs-fargate-deployment.md`](docs/adr/0029-aws-ecs-fargate-deployment.md)
+for the full design reasoning (including why `app` deploys with a
+brief planned outage, and why there is no NAT Gateway).
+
+**Cost warning**: running this stack continuously costs approximately
+$40-70/month even at zero traffic (two Fargate tasks, an ALB, EFS,
+CloudWatch). Nothing in this repository provisions AWS resources
+automatically - `terraform apply` is always a separate, explicit,
+manually-run step - and `docs/deployment-guide.md` documents
+`terraform destroy` to stop billing.
 
 ## Development commands
 

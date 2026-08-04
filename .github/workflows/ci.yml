@@ -39,3 +39,131 @@ jobs:
           # rather than making real network calls or requiring secrets.
           MEDICAL_RAG_EMBEDDING_PROVIDER: fake
           MEDICAL_RAG_LLM_PROVIDER: fake
+
+  # Builds/pushes the app+ui image and updates the two ECS services -
+  # only after `check` passes, and only for a push to main (never for a
+  # PR or a push to any other branch). See
+  # docs/adr/0029-aws-ecs-fargate-deployment.md and
+  # docs/deployment-guide.md.
+  #
+  # This job assumes the AWS infrastructure from terraform/ (PR2 of
+  # Issue #21) has already been applied by the repository owner, and
+  # that the two GitHub configuration values below have been set from
+  # that Terraform run's outputs - see docs/deployment-guide.md's
+  # "GitHub Actions setup" section:
+  #   - repository secret AWS_DEPLOY_ROLE_ARN
+  #     (terraform output github_actions_deploy_role_arn)
+  #   - repository variable AWS_REGION
+  #     (matching terraform.tfvars' aws_region)
+  # Until both are set (and the infrastructure exists), this job fails
+  # on every push to main - expected, not a bug; local development,
+  # Docker Compose, and the `check` job above are entirely unaffected
+  # either way.
+  deploy:
+    name: Deploy to AWS
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required to assume AWS_DEPLOY_ROLE_ARN via OIDC
+      contents: read
+    env:
+      # Hardcoded to match terraform/variables.tf's project_name
+      # default ("medical-guideline-rag") - if that default is ever
+      # overridden in terraform.tfvars, these must be updated to match.
+      ECR_REPOSITORY: medical-guideline-rag
+      ECS_CLUSTER: medical-guideline-rag
+      ECS_APP_SERVICE: medical-guideline-rag-app
+      ECS_UI_SERVICE: medical-guideline-rag-ui
+      ECS_APP_TASK_FAMILY: medical-guideline-rag-app
+      ECS_UI_TASK_FAMILY: medical-guideline-rag-ui
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # No long-lived AWS access keys are stored as GitHub secrets -
+      # this exchanges the workflow's OIDC token for temporary
+      # credentials via the IAM role/trust policy
+      # terraform/iam.tf's github_actions_deploy role already defines
+      # (restricted to this repository, main branch only).
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # One image for both services (ui's task definition overrides
+      # the container command instead of using a second image/Dockerfile
+      # - see ADR 0027/0029). Tagged with the commit SHA for precise,
+      # per-commit rollback via `aws ecs update-service
+      # --task-definition <family>:<revision>` (docs/deployment-guide.md);
+      # also tagged :latest for convenience/manual use.
+      - name: Build and push image
+        id: build-push
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" \
+            .
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      # Registers a new task-definition revision with only the image
+      # field changed - every other field (environment, secrets, EFS
+      # volume, IAM roles, health check) stays exactly as
+      # terraform/ecs.tf defined it; Terraform itself never runs here.
+      - name: Download current app task definition
+        run: |
+          aws ecs describe-task-definition --task-definition "$ECS_APP_TASK_FAMILY" \
+            --query taskDefinition > app-task-definition.json
+
+      - name: Render new app task definition
+        id: render-app
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: app-task-definition.json
+          container-name: app
+          image: ${{ steps.build-push.outputs.image }}
+
+      # deployment_minimum_healthy_percent=0 on this service (ADR 0029
+      # - embedded Qdrant's single-process constraint) means this
+      # deploy briefly stops the old task before starting the new one;
+      # wait-for-service-stability still correctly waits for that to
+      # finish, it just takes a little longer than ui's zero-downtime
+      # rolling deploy below.
+      - name: Deploy app service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-app.outputs.task-definition }}
+          service: ${{ env.ECS_APP_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Download current ui task definition
+        run: |
+          aws ecs describe-task-definition --task-definition "$ECS_UI_TASK_FAMILY" \
+            --query taskDefinition > ui-task-definition.json
+
+      - name: Render new ui task definition
+        id: render-ui
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ui-task-definition.json
+          container-name: ui
+          image: ${{ steps.build-push.outputs.image }}
+
+      - name: Deploy ui service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-ui.outputs.task-definition }}
+          service: ${{ env.ECS_UI_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true

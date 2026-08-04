@@ -6,11 +6,6 @@ Fargate via Terraform. See
 `docs/adr/0029-aws-ecs-fargate-deployment.md` for the full design
 reasoning behind everything below.
 
-> **Status**: this guide currently covers Terraform setup only
-> (PR2 of Issue #21). The GitHub Actions deploy job that builds and
-> pushes the first image, and the corresponding CI/CD sections below,
-> are completed in PR3.
-
 ## Cost warning
 
 Running this stack continuously costs approximately **$40-70/month**
@@ -29,9 +24,9 @@ Run `terraform destroy` (see below) to stop billing when you are done.
   Secrets Manager, CloudWatch, ECR).
 - [Terraform](https://developer.hashicorp.com/terraform/downloads)
   `~> 1.7`.
-- Docker (to build and push the first image manually - see
-  "Bootstrap order" below; PR3 automates this for subsequent
-  deploys).
+- Docker - only needed if you choose the manual bootstrap path (see
+  "Bootstrap order" below); not needed at all if you use the GitHub
+  Actions `deploy` job for the first deploy too.
 
 ## First-time setup
 
@@ -46,27 +41,57 @@ terraform plan   # review every resource before creating anything
 terraform apply  # creates real AWS resources and starts billing
 ```
 
+## GitHub Actions setup
+
+`.github/workflows/ci.yml`'s `deploy` job builds/pushes the image and
+updates both ECS services on every push to `main` (after `terraform
+apply` above has created the infrastructure it targets). It
+authenticates via OIDC - no long-lived AWS access keys are stored in
+GitHub - using the role Terraform already created
+(`terraform/iam.tf`'s `github_actions_deploy`). Configure two values
+in the GitHub repository's Settings once, using this Terraform run's
+outputs:
+
+| Setting | Type | Value |
+|---|---|---|
+| `AWS_DEPLOY_ROLE_ARN` | Repository secret | `terraform output -raw github_actions_deploy_role_arn` |
+| `AWS_REGION` | Repository variable | Whatever `aws_region` is set to in `terraform.tfvars` (default `ap-northeast-1`) |
+
+Until both are set, the `deploy` job fails on every push to `main` -
+expected, and harmless: `check` (lint/format/typecheck/test) still
+runs and still gates every PR regardless, and nothing else in this
+repository is affected.
+
 ## Bootstrap order (image-before-service problem)
 
-The `app`/`ui` ECS services reference an image in the ECR repository
-this same `terraform apply` creates - but ECS cannot start a healthy
-task from a repository that has no image in it yet. Until PR3's
-GitHub Actions deploy job exists, push an image manually the first
-time:
+The `app`/`ui` ECS services' task definitions reference an image in
+the ECR repository that same `terraform apply` creates - but the
+repository has no image in it yet at that point, so the initial ECS
+services are created successfully (Terraform's `aws_ecs_service`
+resource does not wait for the service to reach a healthy steady
+state) while their tasks fail to start until a real image exists.
+Two ways to resolve this - pick one:
 
-```bash
-# From the repository root, after `terraform apply` has created the
-# ECR repository (see the ecr_repository_url output):
-aws ecr get-login-password --region <aws_region> | \
-  docker login --username AWS --password-stdin <account-id>.dkr.ecr.<aws_region>.amazonaws.com
+1. **Preferred: finish "GitHub Actions setup" above, then push to
+   `main`.** The `deploy` job builds/pushes a real image and updates
+   both services in one step - no local Docker or AWS CLI commands
+   needed.
+2. **Or: push an image manually** (e.g. if you want the stack running
+   before wiring up GitHub Actions):
 
-docker build -t <ecr_repository_url>:latest .
-docker push <ecr_repository_url>:latest
+   ```bash
+   # From the repository root, after `terraform apply` has created the
+   # ECR repository (see the ecr_repository_url output):
+   aws ecr get-login-password --region <aws_region> | \
+     docker login --username AWS --password-stdin <account-id>.dkr.ecr.<aws_region>.amazonaws.com
 
-# Then let ECS notice the new image:
-aws ecs update-service --cluster medical-guideline-rag --service medical-guideline-rag-app --force-new-deployment
-aws ecs update-service --cluster medical-guideline-rag --service medical-guideline-rag-ui --force-new-deployment
-```
+   docker build -t <ecr_repository_url>:latest .
+   docker push <ecr_repository_url>:latest
+
+   # Then let ECS notice the new image:
+   aws ecs update-service --cluster medical-guideline-rag --service medical-guideline-rag-app --force-new-deployment
+   aws ecs update-service --cluster medical-guideline-rag --service medical-guideline-rag-ui --force-new-deployment
+   ```
 
 ## Switching to a real OpenAI key
 
