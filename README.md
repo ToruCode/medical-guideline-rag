@@ -49,6 +49,7 @@ This project demonstrates:
 - Retrieval Evaluation
 - Real-Data Retrieval Baseline
 - Chunk Size Comparison
+- Evaluation Dashboard
 - Project Layout
 - License
 
@@ -846,6 +847,39 @@ service). An opt-in test against the real OpenAI API and a real
 `sentence-transformers` model lives in
 `tests/integration/test_live_answer_quality_evaluation.py` (skipped
 unless `RUN_SLOW_TESTS=1` and a real `MEDICAL_RAG_LLM_API_KEY` are set).
+
+## Evaluation dashboard
+
+`app/ui/evaluation_dashboard.py` is a developer-only Streamlit
+dashboard for inspecting the local, gitignored JSON reports produced
+by `scripts/evaluate_answer_quality.py --save-report` (see
+[Answer quality and citation consistency evaluation](#answer-quality-and-citation-consistency-evaluation)
+above) - without re-running any evaluation. It never constructs an
+`Embedder`, `Llm`, or `VectorStore`, and must never be deployed
+alongside the production API. See
+`docs/adr/0025-evaluation-dashboard.md` for the full design.
+
+```bash
+uv run streamlit run app/ui/evaluation_dashboard.py
+```
+
+Point it at a reports directory (default `data/eval/results/`) in the
+sidebar. It shows, per selected report: overall metrics (citation
+precision/recall, answer-point coverage, insufficient-evidence
+accuracy, mean latency, citation-consistency violations), a filterable
+per-question table (failures-only, and by the dataset's optional
+`category`/`difficulty` metadata - see
+[Dashboard filter metadata](docs/evaluation-dataset-format.md#dashboard-filter-metadata-optional-issue-15)),
+and a failure-analysis view reusing the exact same failure criteria as
+`scripts/answer_quality_core.py::print_failure_analysis`. A comparison
+tab shows two reports' aggregate metrics side by side, flagging each as
+improved/degraded/unchanged.
+
+`data/eval/results/` is also used by other `scripts/*_core.py` tools
+(retrieval-only, chunk-size, PDF-extraction, and reranking comparison
+reports); the dashboard silently skips any file there that is not
+shaped like an answer-quality report rather than mis-parsing it (see
+`scripts/evaluation_report_loader.py`).
 
 ## Project layout
 

@@ -67,6 +67,12 @@ class DatasetCase:
     check" / "evidence is expected to be sufficient" so existing
     retrieval-only dataset files (with no such keys) keep parsing
     unchanged.
+
+    category and difficulty are optional, free-form metadata (Issue
+    #15, see docs/evaluation-dataset-format.md) used only for filtering
+    in scripts/evaluation_dashboard_core.py; they default to None
+    ("no metadata"), do not affect any metric, and are ignored by every
+    existing evaluator.
     """
 
     question: str
@@ -74,6 +80,8 @@ class DatasetCase:
     expected_locations: list[tuple[int, int | None]]
     expected_answer_points: list[str] = field(default_factory=list)
     expected_insufficient_evidence: bool = False
+    category: str | None = None
+    difficulty: str | None = None
 
 
 def location_key(page_number: int, chunk_index: int | None) -> str:
@@ -100,6 +108,8 @@ def _parse_case(case_raw: dict[str, Any]) -> DatasetCase:
         expected_locations=expected_locations,
         expected_answer_points=list(case_raw.get("expected_answer_points", [])),
         expected_insufficient_evidence=bool(case_raw.get("expected_insufficient_evidence", False)),
+        category=case_raw.get("category"),
+        difficulty=case_raw.get("difficulty"),
     )
 
 

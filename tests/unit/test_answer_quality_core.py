@@ -13,6 +13,8 @@ from scripts.answer_quality_core import (
     citations_are_subset_of_retrieved,
     evaluate_answer_case,
     evaluate_answer_configuration,
+    failure_reasons,
+    is_failure_case,
     print_failure_analysis,
     summarize_answers,
     write_local_report,
@@ -115,6 +117,44 @@ def test_evaluate_answer_case_computes_citation_and_coverage_metrics() -> None:
     assert result.citations_consistent is True
     assert result.insufficient_evidence_correct is True
     assert result.latency_seconds >= 0.0
+
+
+def test_evaluate_answer_case_carries_category_and_difficulty_from_case() -> None:
+    embedder = _QueryAwareEmbedder({"q": [1.0, 0.0], "matched": [1.0, 0.0]})
+    store = _store_with([_make_result(text="matched", page_number=1)])
+    case = DatasetCase(
+        question="q",
+        granularity="page",
+        expected_locations=[(1, None)],
+        category="dosage",
+        difficulty="easy",
+    )
+
+    result = evaluate_answer_case(
+        case,
+        RetrieveChunksService(embedder=embedder, search_chunks=SearchChunksService(store)),
+        GenerateAnswerService(FakeLlm(answer="matched")),
+        top_k=5,
+    )
+
+    assert result.category == "dosage"
+    assert result.difficulty == "easy"
+
+
+def test_evaluate_answer_case_defaults_category_and_difficulty_to_none() -> None:
+    embedder = _QueryAwareEmbedder({"q": [1.0, 0.0], "matched": [1.0, 0.0]})
+    store = _store_with([_make_result(text="matched", page_number=1)])
+    case = DatasetCase(question="q", granularity="page", expected_locations=[(1, None)])
+
+    result = evaluate_answer_case(
+        case,
+        RetrieveChunksService(embedder=embedder, search_chunks=SearchChunksService(store)),
+        GenerateAnswerService(FakeLlm(answer="matched")),
+        top_k=5,
+    )
+
+    assert result.category is None
+    assert result.difficulty is None
 
 
 def test_evaluate_answer_case_skips_citation_metrics_when_insufficient_evidence_expected() -> None:
@@ -234,6 +274,41 @@ def test_evaluate_answer_configuration_populates_config_and_indexes_document(
     assert run.config.indexed_page_count == 1
     assert run.config.llm_provider == "fake"
     assert len(run.case_results) == 1
+
+
+# --- is_failure_case / failure_reasons ---
+
+
+def test_is_failure_case_false_for_passing_case() -> None:
+    result = evaluate_answer_case(
+        DatasetCase(question="q", granularity="page", expected_locations=[(1, None)]),
+        RetrieveChunksService(
+            embedder=_QueryAwareEmbedder({"q": [1.0, 0.0], "matched": [1.0, 0.0]}),
+            search_chunks=SearchChunksService(
+                _store_with([_make_result(text="matched", page_number=1)])
+            ),
+        ),
+        GenerateAnswerService(FakeLlm(answer="matched")),
+        top_k=5,
+    )
+
+    assert is_failure_case(result) is False
+    assert failure_reasons(result) == []
+
+
+def test_is_failure_case_true_for_insufficient_evidence_mismatch() -> None:
+    result = evaluate_answer_case(
+        DatasetCase(question="q", granularity="page", expected_locations=[(3, None)]),
+        RetrieveChunksService(
+            embedder=_QueryAwareEmbedder({"q": [1.0, 0.0]}),
+            search_chunks=SearchChunksService(InMemoryVectorStore()),
+        ),
+        GenerateAnswerService(FakeLlm()),
+        top_k=5,
+    )
+
+    assert is_failure_case(result) is True
+    assert "insufficient_evidence_mismatch" in failure_reasons(result)
 
 
 # --- reporting ---

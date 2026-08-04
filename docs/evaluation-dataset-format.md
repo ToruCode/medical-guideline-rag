@@ -137,6 +137,34 @@ retrieval evaluation, which ignores them):
   something was retrieved" is not the same as "insufficient
   evidence").
 
+## Dashboard filter metadata (optional, Issue #15)
+
+Two more **optional**, per-case fields, used only for filtering in the
+evaluation dashboard (`app/ui/evaluation_dashboard.py`,
+`docs/adr/0025-evaluation-dashboard.md`) - never for any metric, and
+ignored by every existing evaluator:
+
+```json
+{
+  "question": "What is the adult dosage of Medicamentum X?",
+  "granularity": "page",
+  "expected": [1],
+  "category": "dosage",
+  "difficulty": "easy"
+}
+```
+
+- **`cases[].category`** (default `null`): a short, free-form label
+  (e.g. `"dosage"`, `"side-effects"`) grouping related questions.
+- **`cases[].difficulty`** (default `null`): a short, free-form label
+  (e.g. `"easy"`, `"hard"`) for how difficult the question is expected
+  to be.
+
+Both are carried through unchanged to the saved report's per-case
+result (`--save-report`), so the dashboard can filter by whatever
+values a dataset happens to define - a dataset with neither field
+still works, and both filters simply have nothing to offer.
+
 ```bash
 # Default: FakeLlm, no API key or network needed.
 uv run python -m scripts.evaluate_answer_quality \
