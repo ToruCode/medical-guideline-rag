@@ -6,397 +6,377 @@
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 ![CI](https://github.com/ToruCode/medical-guideline-rag/actions/workflows/ci.yml/badge.svg)
 
-A citation-grounded Retrieval-Augmented Generation (RAG) system for searching medical guideline PDFs.
+医療ガイドラインPDFを対象に、引用根拠付きで検索・回答するRAG（Retrieval-Augmented
+Generation）システムです。Python / FastAPI / Streamlit / LangChain非依存の自前実装で構築し、
+Docker Composeでローカル完全再現できる構成にしています。Terraformで構築したAWS ECS
+Fargate環境（ALB・EFS・S3・Secrets Manager・CloudWatch）に実際にデプロイし、FastAPI /
+Streamlitの正常稼働とヘルスチェック成功を実機で検証、検証後は `terraform destroy` まで実施して
+コストを発生させない運用まで確認しました。
+
+## Highlights
+
+- **Terraform**: VPC・ALB・ECS Fargate・EFS・S3・Secrets Manager・CloudWatch・IAM（GitHub
+  Actions OIDC含む）一式をコード化し、46リソースを一括applyで構築
+- **AWS ECS Fargate**: FastAPI（app）・Streamlit（ui）の2サービスをFargateで実稼働
+- **Docker**: 同一イメージをapp/ui両サービスで共用（コマンド上書きのみ）、`docker compose`で
+  ローカル完全再現
+- **ECR**: CIからのイメージビルド・push、ライフサイクルポリシーによる自動クリーンアップ
+- **ALB**: パスベースルーティング（`/api/*` → app、それ以外 → ui）、ヘルスチェック運用
+- **FastAPI**: `/api/v1/health` が実機で HTTP 200 を返すことを確認
+- **Streamlit**: トップページが実機で HTTP 200 を返すことを確認
+- **CloudWatch**: Logs / Dashboard / Alarmを構築し、正常起動ログを実機で確認
+- **`terraform destroy` まで実施**: 検証後は全リソースを削除し、課金が残らないことをAWS CLIで確認済み
 
 ---
 
-## Overview
+## 目次
 
-Medical Guideline RAG is a demonstration project that implements a complete Retrieval-Augmented Generation pipeline using modern AI engineering practices.
+- [プロジェクト概要](#プロジェクト概要)
+- [解決したい課題](#解決したい課題)
+- [主な機能](#主な機能)
+- [デモ・動作確認](#デモ動作確認)
+- [システム構成](#システム構成)
+- [技術スタック](#技術スタック)
+- [AWS構成](#aws構成)
+- [Terraform管理対象](#terraform管理対象)
+- [ディレクトリ構成](#ディレクトリ構成)
+- [ローカル実行手順](#ローカル実行手順)
+- [AWSデプロイ手順の概要](#awsデプロイ手順の概要)
+- [テスト・品質管理](#テスト品質管理)
+- [セキュリティ設計](#セキュリティ設計)
+- [コスト設計](#コスト設計)
+- [工夫した点](#工夫した点)
+- [苦労した点と解決方法](#苦労した点と解決方法)
+- [評価方法](#評価方法)
+- [制約・免責事項](#制約免責事項)
+- [今後の改善](#今後の改善)
+- [ライセンス](#ライセンス)
+- [このプロジェクトで得られたこと](#このプロジェクトで得られたこと)
 
-The system allows users to:
+---
 
-- Upload medical guideline PDFs
-- Build vector indexes
-- Search using semantic similarity
-- Generate grounded answers with GPT-4o-mini
-- Return citations with every answer
+## プロジェクト概要
 
-This project demonstrates:
+Medical Guideline RAGは、医療ガイドラインPDFを対象とした引用根拠付きRAGシステムです。
+アップロードしたPDFをチャンク分割・ベクトル化してインデックスし、自然言語の質問に対して
+「取得した文書の範囲内だけ」で根拠付きの回答を生成します。生成に使える根拠が見つからない場合は
+「根拠不十分」という結果を明示的に返し、モデルが情報を捏造しないことを設計上保証しています。
 
-- Clean Architecture
-- Domain Driven Design
-- FastAPI
-- Sentence Transformers
-- OpenAI GPT-4o-mini
-- Docker
-- GitHub Actions
-- Architecture Decision Records (ADR)
+このプロジェクトは技術デモンストレーションであり、医療診断・個別患者への治療判断・
+患者固有の推奨は一切行いません。
 
-## Table of Contents
+Clean Architecture / Domain-Driven Designに基づく4層構成（API / Application / Domain /
+Infrastructure）を採用し、主要な設計判断はすべて Architecture Decision Record（ADR、
+`docs/adr/` 配下に29件）として記録しています。
 
-- Overview
-- System Architecture
-- RAG Workflow
-- Tech Stack
-- Features
-- Requirements
-- Setup
-- Docker
-- AWS Deployment
-- API
-- Streamlit Demo UI
-- Live End-to-End Verification
-- Retrieval Evaluation
-- Real-Data Retrieval Baseline
-- Chunk Size Comparison
-- Evaluation Dashboard
-- Project Layout
-- License
+## 解決したい課題
 
-## System Architecture
+医療ガイドラインは数百ページに及ぶことも多く、必要な情報を人手で探すのは時間がかかります。
+また、汎用のLLMにそのまま質問すると、ガイドラインに書かれていない内容を「それらしく」
+生成してしまうリスク（ハルシネーション）があり、医療分野では特に致命的です。
 
-```mermaid
-flowchart LR
+本プロジェクトは、次の2点を技術的に解決することを目標にしています。
 
-User([User])
+- 自然言語の質問から、関連する原文パッセージを高速に検索できること
+- 生成される回答が、検索されたパッセージの範囲を超えて情報を捏造しないこと（引用根拠が
+  必ず一致すること）、根拠が無ければ「わからない」と正直に返すこと
 
-API[FastAPI]
+## 主な機能
 
-Ask[AskQuestionService]
+- 自分のPDFガイドライン文書に対する自然言語検索。すべての回答に出典名・ページ番号・
+  類似度スコアを引用として付与
+- 回答は検索済みパッセージのみから生成（捏造しない）。関連パッセージが見つからない場合は
+  「根拠不十分」という結果を明示的に返却
+- `POST /documents/index`（PDFインデックス登録）、`POST /questions/ask`（質問応答）の
+  2エンドポイント。Swagger UIによるインタラクティブなAPIドキュメント付き
+- APIキーやネットワーク接続なしで完全オフライン動作可能（決定論的なFake実装）。環境変数の
+  切り替えのみで、実際のsentence-transformersモデル・OpenAI APIに切り替え可能
+- API/Application/Domain/Infrastructureの層構造と、全設計判断を記録したADR
+- `uv`によるローカル実行、または`docker compose`によるコンテナ実行の両対応
+- 質問応答と引用確認ができるStreamlit製デモUI
+- 検索精度（Recall@k / MRR）・回答品質（引用の精度・再現率など）を測定する評価ツール群
+- **比較実験専用の検索改善パイプライン**（本番未採用、詳細は[評価方法](#評価方法)参照）:
+  Hybrid Search（Dense＋BM25）、Cross-Encoderによるリランキング、表構造対応チャンキング
 
-Retrieve[RetrieveChunksService]
+## デモ・動作確認
 
-Generate[GenerateAnswerService]
-
-Embed[SentenceTransformer]
-
-Vector[(VectorStore)]
-
-LLM[OpenAI GPT-4o-mini]
-
-Answer([Grounded Answer])
-
-User --> API
-
-API --> Ask
-
-Ask --> Retrieve
-
-Ask --> Generate
-
-Retrieve --> Embed
-
-Retrieve --> Vector
-
-Generate --> LLM
-
-Vector --> Generate
-
-Generate --> Answer
-```
-
-## RAG Workflow
-
-```mermaid
-flowchart TD
-
-A[PDF Upload]
-
-A --> B[PDF Loader]
-
-B --> C[Chunking]
-
-C --> D[SentenceTransformer Embedding]
-
-D --> E[(Vector Store)]
-
-F[User Question]
-
-F --> G[Question Embedding]
-
-G --> H[Similarity Search]
-
-E --> H
-
-H --> I[Top-k Chunks]
-
-I --> J[Prompt Builder]
-
-J --> K[GPT-4o-mini]
-
-K --> L[Grounded Answer with Citations]
-```
-
-## Tech Stack
-
-| Category | Technology |
-|----------|------------|
-| Language | Python 3.12 |
-| Framework | FastAPI |
-| Embedding | Sentence Transformers (intfloat/multilingual-e5-base) |
-| LLM | OpenAI GPT-4o-mini |
-| Vector Store | In-memory (default) or Qdrant (embedded/local mode, persistent) |
-| API Docs | Swagger UI |
-| Dependency | uv |
-| Testing | pytest |
-| Lint | Ruff |
-| Type Check | mypy |
-| Container | Docker / Docker Compose |
-| CI/CD | GitHub Actions |
-| Infrastructure as Code | Terraform |
-| Cloud | AWS ECS Fargate |
-
-## Features
-
-- Natural-language search over your own PDF guideline documents, with
-  citations (source name, page number, similarity score) attached to
-  every answer.
-- Answers are grounded only in retrieved passages - never invented -
-  with an explicit insufficient-evidence result when nothing relevant
-  was found.
-- Two HTTP endpoints (`POST /documents/index`, `POST /questions/ask`)
-  with interactive Swagger UI docs, built on FastAPI.
-- Runs fully offline out of the box (deterministic Fake embedding/LLM
-  implementations, no API key or network access required), or with a
-  real local `sentence-transformers` embedding model and the real
-  OpenAI API selected via a couple of environment variables - see
-  [Embedding](#embedding), [Generation](#generation), and
-  [Live end-to-end verification](#live-end-to-end-verification-real-embedding--llm).
-- A layered architecture (API / Application / Domain / Infrastructure)
-  with an ADR (`docs/adr/`) recording the reasoning behind every major
-  decision - see [Project layout](#project-layout).
-- Runnable locally with `uv` or in a container with Docker Compose -
-  see [Setup](#setup) and [Docker](#docker).
-- A minimal Streamlit demo UI for asking a question and inspecting the
-  answer/citations without Swagger UI - see
-  [Streamlit demo UI](#streamlit-demo-ui).
-
-## Status
-
-Minimal FastAPI setup with a health check endpoint, environment-based
-settings, standard logging, a PDF loading foundation, a text chunking
-foundation, an embedding foundation (Issue #6), a vector store
-abstraction foundation (Issue #7), an indexing pipeline that composes
-all of the above end to end (Issue #8), a retrieval use case
-(Issue #9) that embeds a natural-language query and returns similar
-chunks, a generation use case (Issue #10) that turns retrieved chunks
-into a citation-grounded answer, a FastAPI RAG API (Issue #11) exposing
-document indexing and question answering end to end, real
-`Embedder`/`Llm` adapters (Issue #12: a local `sentence-transformers`
-model and OpenAI's Chat Completions API), selectable alongside the
-still-default Fake implementations via `Settings`, a verified, opt-in
-live end-to-end test of the full stack with both real adapters
-(see [Live end-to-end verification](#live-end-to-end-verification-real-embedding--llm)
-below), release readiness: a working `Dockerfile`/`docker compose`
-setup (see [Docker](#docker)), an MIT [License](#license), and a
-GitHub Actions CI workflow, a minimal Streamlit demo UI
-(Issue #13) for the question-answering flow (see
-[Streamlit demo UI](#streamlit-demo-ui) below), and a persistent
-`QdrantVectorStore` option (Issue #17, embedded/local mode) selectable
-alongside the still-default `InMemoryVectorStore`, with a
-`scripts/index_documents.py --rebuild` CLI for bulk-indexing and
-explicit rebuilds (see [Vector store](#vector-store) above), a Docker
-Compose integrated local stack (Issue #19) running `app` and `ui`
-together with persistent storage (see [Docker](#docker) above), and a
-production-like AWS deployment (Issue #21: S3-backed document storage,
-Terraform-provisioned ECS Fargate infrastructure, and a GitHub Actions
-CI/CD pipeline - see [AWS deployment](#aws-deployment) above).
-
-## Requirements
-
-Either:
-
-- Python 3.12 and [uv](https://docs.astral.sh/uv/), or
-- Docker and Docker Compose - see [Docker](#docker) below.
-
-## Setup
-
-```bash
-uv sync
-cp .env.example .env
-```
-
-Edit `.env` as needed. All settings are environment variables prefixed
-with `MEDICAL_RAG_` (see `app/core/config.py` and `.env.example` for
-the full list). `.env` is not committed to Git.
-
-Future plan: settings will be split per environment (Local / Test /
-Staging / Production) instead of a single `Settings` class.
-
-`uv sync` installs `sentence-transformers` (and its transitive
-`torch`/`transformers` dependencies) and `openai` regardless of which
-provider is configured; this is a sizeable download (hundreds of MB,
-CPU-only). Both remain unused unless you opt in via
-`MEDICAL_RAG_EMBEDDING_PROVIDER=sentence_transformers` and/or
-`MEDICAL_RAG_LLM_PROVIDER=openai` - see [Embedding](#embedding) and
-[Generation](#generation) below.
-
-`tests/conftest.py` loads `.env` automatically (via `python-dotenv`, a
-dev-only dependency) before tests are collected, so filling in
-`.env` alone is enough to enable the opt-in live tests described in
-[Live end-to-end verification](#live-end-to-end-verification-real-embedding--llm)
-below - a real exported shell variable still takes precedence over
-`.env` if both are set.
-
-## Docker
-
-Brings up the API and the Streamlit demo UI together, backed by a
-persistent vector store - see
-`docs/adr/0027-docker-compose-integrated-stack.md` for the full design
-reasoning behind what follows.
+### ローカル環境（Docker Composeで再現可能）
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-`docker compose` requires `.env` to already exist (it is passed to
-both services via `env_file`); running it before `cp .env.example
-.env` fails with a missing-file error. Once running:
+- API: `http://localhost:8000/docs` （Swagger UI）
+- Streamlit UI: `http://localhost:8501`
 
-- the API is reachable at `http://localhost:8000` exactly as with
-  `make dev` - `/docs` for Swagger UI, `GET /api/v1/health` directly,
-  etc.
-- the Streamlit demo UI is reachable at `http://localhost:8501`.
+APIキー・ネットワーク接続なしで起動できる決定論的なFake実装がデフォルトのため、
+上記コマンドだけですぐに動作確認できます。
 
-The image (`Dockerfile`) installs `sentence-transformers`/`openai` the
-same as a local `uv sync` (see [Setup](#setup)); by default it still
-runs with the Fake providers, so no model download or API key is
-required just to start the stack. If you switch
-`MEDICAL_RAG_EMBEDDING_PROVIDER=sentence_transformers` in `.env`, the
-model downloads on first use into a named volume (`hf_cache`, mounted
-at `/root/.cache/huggingface`), so it is **not** re-downloaded every
-time the container is recreated - only when the volume itself is
-removed (`docker compose down -v`).
+### AWS環境での実機検証（実施・完了済み、現在は削除済み）
 
-`compose.yaml` runs the image as built (no source bind-mount); it is
-meant to run the same thing you would deploy, not as a hot-reload dev
-loop. For local development with auto-reload on file changes, use
-`make dev`/`make ui` (plain `uv`) instead - see
-[Development commands](#development-commands) below.
+以下を実際のAWS環境（ap-northeast-1）で検証しました。
 
-### Services
+| 項目 | 結果 |
+|---|---|
+| Dockerイメージのビルド・ECRへのpush | 成功 |
+| Terraformによる46リソースの一括構築（`terraform apply`） | 成功 |
+| ECS Fargate上でapp（FastAPI）・ui（Streamlit）が起動 | 成功（running=1, pending=0） |
+| ALBのTarget Group（app / ui） | ともに `healthy` |
+| ALB経由 `GET /api/v1/health` | HTTP 200、`{"status":"ok",...}` |
+| ALB経由 `GET /`（Streamlitトップページ） | HTTP 200 |
+| CloudWatch Logsでの起動ログ確認 | エラーなし、正常起動を確認 |
+| 検証後 `terraform destroy` | 成功（47/48リソース即時削除、ECRはイメージ削除後に再実行し完全削除） |
+| `terraform state list`（destroy後） | 空（管理対象リソース0件） |
 
-`compose.yaml` defines two services, both built from the same
-`Dockerfile` (no second Dockerfile - the UI service just overrides
-`command:`):
+**現在、AWS上にはこのプロジェクトのリソースは何も存在しません。** 継続的に課金が発生する
+構成（Fargate・ALB・EFS等）のため、検証後は速やかに`terraform destroy`する運用としています。
+再現する場合は[AWSデプロイ手順の概要](#awsデプロイ手順の概要)を参照してください。
 
-- **`app`** - the FastAPI server (`uvicorn`, port `8000`). A
-  `HEALTHCHECK` in the `Dockerfile` calls `GET /api/v1/health` every
-  30 seconds; `docker compose ps` reports it `healthy` once the first
-  check passes.
-- **`ui`** - the Streamlit demo UI (port `8501`), reached by the
-  browser directly, and reaching `app` over the Compose network as
-  `http://app:8000` (overridden in `compose.yaml`, not `.env`). It
-  waits for `app` to be `healthy` (`depends_on`) before starting, and
-  has its own healthcheck against Streamlit's `/_stcore/health`.
+### スクリーンショットについて
 
-There is deliberately **no separate Qdrant container**. The persistent
-vector store (`MEDICAL_RAG_VECTOR_STORE_PROVIDER=qdrant`) uses
-Qdrant's embedded/local mode - an in-process store backed by a local
-directory, not a server - so `compose.yaml` only needs a named volume
-(`qdrant_storage`, mounted into `app`) for it to survive `docker
-compose down`/recreation. `compose.yaml` sets
-`MEDICAL_RAG_VECTOR_STORE_PROVIDER=qdrant` on the `app` service
-regardless of what `.env` says (`.env.example`'s own default stays
-`memory`, for tests/CI - see [Persistent vector store](#vector-store)
-and `docs/adr/0026-persistent-vector-store.md`), so this stack always
-persists what it indexes across restarts.
+現時点でリポジトリ内にポートフォリオ掲載用のスクリーンショットは存在しません。追加する場合は
+以下の保存先・ファイル名を推奨します（自己作成の非機密サンプル文書を用いたもののみ）。
 
-### Initial indexing
+- `docs/images/streamlit-ui.png` — Streamlitデモ画面
+- `docs/images/swagger-ui.png` — Swagger UI（`/docs`）
+- `docs/images/cloudwatch-logs.png` — CloudWatch Logsの正常起動ログ
+- `docs/images/ecs-target-group-healthy.png` — ALB Target Groupのhealthy状態
 
-The stack starts with an empty index. To index PDFs for the first
-time:
+## システム構成
 
-1. Place one or more PDFs under `data/raw/` on the host (already
-   gitignored; use a self-authored, non-confidential sample - see
-   `data/sample/README.md`). `compose.yaml` bind-mounts `./data` into
-   the `app` container, so no image rebuild is needed.
-2. Make sure `app` is **not** currently running - Qdrant's embedded
-   mode only allows one process to hold `MEDICAL_RAG_VECTOR_STORE_PATH`
-   open at a time, so indexing and a running `app` container cannot
-   point at the same path concurrently (`docker compose down`, or
-   simply don't `up` yet).
-3. Run the indexing script inside a one-off container:
+### RAGパイプライン全体
 
-   ```bash
-   docker compose run --rm app uv run --frozen --no-dev python -m scripts.index_documents
-   ```
+```mermaid
+flowchart LR
 
-4. Start (or restart) the stack normally:
+User([ユーザー])
+API[FastAPI]
+Ask[AskQuestionService]
+Retrieve[RetrieveChunksService]
+Generate[GenerateAnswerService]
+Embed[SentenceTransformer]
+Vector[(VectorStore)]
+LLM[OpenAI GPT-4o-mini]
+Answer([引用付き回答])
 
-   ```bash
-   docker compose up
-   ```
-
-The indexed chunks now persist in the `qdrant_storage` volume; ask
-questions via the UI (`http://localhost:8501`) or `POST
-/api/v1/questions/ask`.
-
-### Re-indexing (`--rebuild`)
-
-Re-running the same command as above (without `--rebuild`) is safe at
-any time - `scripts/index_documents.py` re-indexes by `chunk_id`, so a
-changed PDF's chunks are updated in place rather than duplicated. A
-full `--rebuild` (discard the existing index, then re-index from
-scratch) is only needed when the *embedding itself* is no longer
-compatible with what's stored - most commonly after changing
-`MEDICAL_RAG_EMBEDDING_PROVIDER`/`MEDICAL_RAG_EMBEDDING_MODEL_NAME` in
-`.env`, since old and new vectors can have different dimensions:
-
-```bash
-# Stop app first (same one-process-per-path constraint as above)
-docker compose down
-docker compose run --rm app uv run --frozen --no-dev python -m scripts.index_documents --rebuild
-docker compose up
+User --> API
+API --> Ask
+Ask --> Retrieve
+Ask --> Generate
+Retrieve --> Embed
+Retrieve --> Vector
+Generate --> LLM
+Vector --> Generate
+Generate --> Answer
 ```
 
-`--rebuild` deletes the **entire** `MEDICAL_RAG_VECTOR_STORE_PATH`
-directory, not just one collection's data - see
-`docs/adr/0026-persistent-vector-store.md` before using it if you have
-indexed data you want to keep.
+### インデックス登録〜検索〜生成のデータフロー
 
-### Switching back to the in-memory provider
+```mermaid
+flowchart TD
 
-For a lightweight demo where persistence isn't needed, remove (or
-comment out) the `MEDICAL_RAG_VECTOR_STORE_PROVIDER: qdrant`
-`environment:` override on the `app` service in `compose.yaml` - the
-stack then falls back to `.env`'s own value, `memory` by default, and
-indexed chunks are lost whenever `app` restarts (as documented in
-[Vector store](#vector-store) above).
+A[PDFアップロード]
+A --> B[PDF Loader]
+B --> C[チャンク分割]
+C --> D[SentenceTransformerで埋め込み]
+D --> E[(VectorStore)]
 
-### Stopping the stack
-
-```bash
-docker compose down      # stop and remove containers, keep volumes
-docker compose down -v   # also remove hf_cache and qdrant_storage - deletes the index
+F[ユーザーの質問]
+F --> G[質問文の埋め込み]
+G --> H[類似度検索]
+E --> H
+H --> I[Top-kチャンク]
+I --> J[プロンプト構築]
+J --> K[GPT-4o-mini]
+K --> L[引用付き回答]
 ```
 
-## AWS deployment
+### AWSインフラ構成（実際にterraformで構築・検証した構成）
 
-Beyond `docker compose` (above), the same `app`/`ui` images can be
-deployed to a production-like AWS stack - ECS Fargate, an ALB,
-EFS-persisted Qdrant, S3 for guideline PDFs, and Secrets Manager for
-the OpenAI key - provisioned with Terraform (`terraform/`) and kept
-up to date by a GitHub Actions deploy job. See
-[`docs/deployment-guide.md`](docs/deployment-guide.md) for setup,
-bootstrap, rollback, and troubleshooting instructions, and
-[`docs/adr/0029-aws-ecs-fargate-deployment.md`](docs/adr/0029-aws-ecs-fargate-deployment.md)
-for the full design reasoning (including why `app` deploys with a
-brief planned outage, and why there is no NAT Gateway).
+```mermaid
+flowchart TB
 
-**Cost warning**: running this stack continuously costs approximately
-$40-70/month even at zero traffic (two Fargate tasks, an ALB, EFS,
-CloudWatch). Nothing in this repository provisions AWS resources
-automatically - `terraform apply` is always a separate, explicit,
-manually-run step - and `docs/deployment-guide.md` documents
-`terraform destroy` to stop billing.
+User([利用者])
 
-## Development commands
+subgraph VPC["VPC（パブリックサブネット×2、NAT Gateway不使用）"]
+  ALB["ALB（HTTP:80のみ）"]
+  ECSApp["ECS Fargate: app（FastAPI, :8000）"]
+  ECSUi["ECS Fargate: ui（Streamlit, :8501）"]
+end
+
+EFS[("EFS<br/>Qdrant永続化（embeddedモード）")]
+S3[("S3<br/>ガイドラインPDF")]
+SM["Secrets Manager<br/>LLM APIキー"]
+CW["CloudWatch<br/>Logs / Dashboard / Alarm"]
+
+GHA["GitHub Actions"]
+ECR[("ECR")]
+
+User --> ALB
+ALB -->|"/api/*, /docs 等"| ECSApp
+ALB -->|"それ以外（既定）"| ECSUi
+ECSUi -.HTTP.-> ECSApp
+ECSApp --> EFS
+ECSApp --> S3
+ECSApp --> SM
+ECSApp --> CW
+ECSUi --> CW
+
+GHA -->|OIDC認証・push| ECR
+ECR -->|イメージ取得| ECSApp
+ECR -->|イメージ取得| ECSUi
+GHA -->|ecs update-service| ECSApp
+GHA -->|ecs update-service| ECSUi
+```
+
+ECS Fargateタスクはパブリックサブネットに配置されますが、セキュリティグループにより
+ALB以外からの直接アクセスは遮断されています（詳細は[セキュリティ設計](#セキュリティ設計)）。
+
+## 技術スタック
+
+| カテゴリ | 技術 |
+|---|---|
+| 言語 | Python 3.12 |
+| Webフレームワーク | FastAPI |
+| Embedding | Sentence Transformers（`intfloat/multilingual-e5-base`） |
+| LLM | OpenAI GPT-4o-mini |
+| Vector Store | In-memory（既定）/ Qdrant（embedded/localモード、永続化） |
+| APIドキュメント | Swagger UI |
+| 依存管理 | uv |
+| テスト | pytest |
+| Lint | Ruff |
+| 型チェック | mypy |
+| コンテナ | Docker / Docker Compose |
+| CI/CD | GitHub Actions |
+| IaC | Terraform |
+| クラウド | AWS（ECS Fargate / ALB / EFS / S3 / Secrets Manager / CloudWatch / IAM） |
+
+検索改善の比較実験（本番未採用）では、自前実装のBM25・日本語トークナイザー、
+Cross-Encoderリランキングモデル（`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`）も使用しています。
+
+## AWS構成
+
+Terraformで構築した本番相当のAWS構成です（[デモ・動作確認](#デモ動作確認)で実機検証済み）。
+
+- **ECS Fargate**: `app`（FastAPI、CPU 512 / Memory 1024）と`ui`（Streamlit、CPU 256 /
+  Memory 512）の2サービス。同一のDockerイメージを使い、uiのみコンテナ起動コマンドを
+  上書き（`streamlit run ...`）
+- **ALB**: HTTPのみ（80番）。`/api/*`, `/docs`, `/openapi.json`, `/redoc` はappへ、
+  それ以外はuiへパスベースで転送。ヘルスチェックはapp: `/api/v1/health`、ui: `/_stcore/health`
+- **EFS**: Qdrantのembedded/localモード用の永続ストレージ。IAM認可（Access Point経由）で
+  appタスクのみマウント可能
+- **S3**: ガイドラインPDF保管用。バージョニング有効、非現行バージョンは90日で自動失効、
+  パブリックアクセスは完全ブロック
+- **Secrets Manager**: OpenAI APIキー用。Terraformはプレースホルダー値のみを作成し、
+  実キーはAWS CLIで別途（out-of-band）登録する設計
+- **CloudWatch**: app/uiそれぞれのLog Group、CPU/Memory使用率・ALBリクエスト数・5xx数を
+  可視化するDashboard、5xx多発・unhealthyホスト検知のAlarm
+- **IAM**: ECSタスク実行ロール・appタスクロール・uiタスクロールを分離し、それぞれ必要最小限の
+  権限のみ付与。GitHub Actionsのデプロイは長期AWSキーを使わずOIDC連携で実施
+- **NAT Gatewayは意図的に不使用**: Fargateタスクはパブリックサブネットに配置しつつ、
+  セキュリティグループで直接アクセスを遮断する構成とし、NAT Gatewayの固定費（月$32〜70）を
+  回避
+
+設計判断の詳細は`docs/adr/0029-aws-ecs-fargate-deployment.md`に記録しています。
+
+## Terraform管理対象
+
+`terraform/`配下で以下のリソースをコード管理しています（機微情報を含むため、実際のARN・
+アカウントID・DNS名等はREADMEに記載していません）。
+
+| カテゴリ | 内容 |
+|---|---|
+| ネットワーク | VPC、Internet Gateway、パブリックSubnet×2、Route Table |
+| Security Group | ALB用、app用、ui用、EFS用（計4つ、相互に最小権限で連携） |
+| ALB | Load Balancer、Listener（HTTP）、Listener Rule、Target Group×2 |
+| ECS | Cluster、Task Definition×2、Service×2 |
+| EFS | File System、Access Point、Mount Target×2（2AZ分） |
+| S3 | Bucket、Versioning、Lifecycle Configuration、Public Access Block |
+| Secrets Manager | Secret、Secret Version（プレースホルダー） |
+| IAM | Role×4、Role Policy×5、Policy Attachment×1、GitHub Actions用OIDC Provider |
+| CloudWatch | Log Group×2、Dashboard、Metric Alarm×2 |
+| ECR | Repository、Lifecycle Policy（未タグイメージを7日で自動失効） |
+
+`terraform apply`で計46リソース、`terraform destroy`で48リソース（構築後に増えたECSタスク等の
+実体を含む）を一括管理できることを実機で確認しています。
+
+## ディレクトリ構成
+
+```
+app/
+├── api/              # FastAPIエンドポイント・依存性注入（app/api/dependencies.py）
+├── application/      # ユースケース層（Application Service）
+│   └── services/
+├── domain/           # エンティティ・値オブジェクト・Port（Protocol）定義
+│   ├── models/
+│   ├── ports/
+│   └── exceptions/
+├── infrastructure/   # 外部ライブラリ実装（PDF/Embedding/LLM/VectorStore/Storage）
+│   ├── pdf/
+│   ├── chunking/
+│   ├── embedding/
+│   ├── llm/
+│   ├── vector_store/
+│   └── storage/
+├── core/             # 設定・ロギング・共通定数
+├── schemas/          # Pydanticリクエスト/レスポンススキーマ
+└── ui/               # Streamlitデモ UI・評価ダッシュボード
+
+tests/
+├── unit/             # ドメイン・アプリケーション層の単体テスト
+├── integration/      # パイプライン結合テスト、opt-inの実モデル/実API検証
+├── api/              # FastAPIエンドポイントのテスト
+└── support/          # テスト用ヘルパー（PDF生成、評価データセット定義）
+
+scripts/              # 開発・運用・比較評価用スクリプト（インデックス登録、各種評価CLI）
+docs/
+├── adr/              # Architecture Decision Record（29件）
+└── *.md              # 要件定義・アーキテクチャ・評価結果ドキュメント
+
+terraform/            # AWSインフラのIaC定義一式
+data/                 # raw/processed/sample/eval（実データ・評価データはgitignore対象）
+.github/workflows/    # CI/CDパイプライン（lint/format/typecheck/test、AWSデプロイ）
+Dockerfile
+compose.yaml
+```
+
+## ローカル実行手順
+
+Python 3.12 + [uv](https://docs.astral.sh/uv/)、またはDocker / Docker Composeのいずれかが必要です。
+
+### uvで直接実行
 
 ```bash
-make dev        # run the API with uvicorn --reload
+uv sync
+cp .env.example .env
+make dev   # http://127.0.0.1:8000/docs
+make ui    # 別ターミナルで、http://localhost:8501
+```
+
+設定はすべて`MEDICAL_RAG_`プレフィックス付きの環境変数です（`app/core/config.py`と
+`.env.example`参照）。デフォルトはAPIキー・ネットワーク接続不要な決定論的Fake実装です。
+
+### Docker Composeで実行
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+`app`（FastAPI, 8000番）と`ui`（Streamlit, 8501番）が同時起動し、Qdrant永続ボリューム
+（embedded/localモード、別サーバー不要）で状態を保持します。PDFのインデックス登録は
+
+```bash
+docker compose run --rm app uv run --frozen --no-dev python -m scripts.index_documents
+```
+
+で実行します（`data/raw/`配下のPDFを対象。自己作成の非機密サンプルのみ使用してください）。
+
+### 開発コマンド
+
+```bash
+make dev        # uvicorn --reloadでAPI起動
 make lint       # ruff check
 make format     # ruff format --check
 make typecheck  # mypy
@@ -404,689 +384,205 @@ make test       # pytest
 make check      # lint + typecheck + test
 ```
 
-Once the server is running, open `http://127.0.0.1:8000/docs` for the
-Swagger UI, or call `GET /api/v1/health` directly.
+## AWSデプロイ手順の概要
 
-## PDF loading
+詳細な手順・トラブルシューティングは`docs/deployment-guide.md`に記載しています。ここでは
+概要のみ示します（実際のアカウントID・ARN等の機微情報は含みません）。
 
-Text-layer PDFs can be loaded page by page via any implementation of
-the `app.domain.ports.pdf_loader.PdfLoader` interface, returning
-immutable `DocumentPage` values. **PyMuPDF
-(`app.infrastructure.pdf.pymupdf_loader.PyMuPdfLoader`) is the default
-production extractor** (`MEDICAL_RAG_PDF_EXTRACTOR=pymupdf`), selected
-in `app/api/dependencies.py`'s `get_pdf_loader()` based on
-`Settings.pdf_extractor`. `pypdf`
-(`app.infrastructure.pdf.pypdf_loader.PypdfLoader`) remains available
-as a config-only rollback (`MEDICAL_RAG_PDF_EXTRACTOR=pypdf`); an
-unrecognized value raises a clear error at startup. For the Japanese
-medical guideline PDFs this project targets, extraction quality has a
-large effect on downstream retrieval accuracy - a local, single-document
-comparison found PyMuPDF's extracted text meaningfully more reliable
-(fewer garbled/corrupted pages) and Recall/MRR substantially higher
-than `pypdf`'s under an identical retrieval configuration; see
-`docs/adr/0017-pdf-extraction-comparison-tooling.md`,
-`docs/adr/0018-adopt-pymupdf-for-production-pdf-extraction.md` (which
-also notes an open PyMuPDF license follow-up - AGPL-3.0/commercial dual
-license - that must be resolved before any commercial or public
-deployment), and `docs/pdf-extraction-comparison-results.md` for
-anonymized aggregate figures. Scanned PDFs (image-only, no text layer)
-and encrypted PDFs are not supported by either extractor; see
-`docs/adr/0003-pdf-extraction-library.md` for the original reasoning
-and constraints.
+1. **Terraformでインフラを構築**
+   ```bash
+   cd terraform
+   cp terraform.tfvars.example terraform.tfvars
+   terraform init
+   terraform plan   # 作成されるリソースを必ず確認
+   terraform apply  # 実リソースを作成（課金が発生し始める）
+   ```
+2. **GitHub Actionsのデプロイ設定**（初回のみ）: リポジトリ設定に、Terraformの出力値から
+   `AWS_DEPLOY_ROLE_ARN`（Repository secret）と`AWS_REGION`（Repository variable）を登録。
+   長期のAWSアクセスキーは一切使用せず、OIDC経由で一時クレデンシャルを取得する構成です。
+3. **初回イメージのブートストラップ**: `main`ブランチへのpushでCI/CDが自動的にビルド・
+   ECRへpush・ECSサービス更新まで実施します。手動でイメージをpushする代替手順も用意しています。
+4. **実際のOpenAI APIキーへの切替**（任意）: Terraformはプレースホルダー値のみ作成するため、
+   `aws secretsmanager put-secret-value`で別途登録し、`llm_provider = "openai"`に変更して
+   再applyします。
+5. **停止・削除**
+   ```bash
+   cd terraform
+   terraform destroy  # 作成した全リソースを削除し、課金を停止
+   ```
 
-PDFs can be uploaded via `POST /api/v1/documents/index` (see
-[API](#api) below). Only self-authored, license-free sample PDFs belong
-under `data/sample/` (see `data/sample/README.md`); real or
-copyrighted guideline PDFs must never be committed, and `data/raw/` is
-git-ignored for that reason.
+継続稼働させると月額約$40〜70のコストが発生するため（[コスト設計](#コスト設計)参照）、
+検証用途では検証後に必ず`terraform destroy`する運用を推奨します（本プロジェクトでも
+この運用を実施済みです）。
 
-## Text chunking
+## テスト・品質管理
 
-`DocumentPage`s produced by the PDF loader can be split into
-`Chunk`s for downstream embedding and search via
-`app.infrastructure.chunking.fixed_size_text_splitter.FixedSizeTextSplitter`
-(implements `app.domain.ports.text_splitter.TextSplitter`) together
-with `app.application.services.chunk_document.ChunkDocumentService`,
-which carries `document_id`, `page_number`, `source_name`,
-`source_path`, and `title` from each page into its chunks.
-
-Chunking is character-count based (not LangChain, not token-based) and
-configured via `MEDICAL_RAG_CHUNK_SIZE` (default 1000) and
-`MEDICAL_RAG_CHUNK_OVERLAP` (default 200). See
-`docs/adr/0004-text-chunking-strategy.md` for the reasoning and
-constraints.
-
-## Embedding
-
-`Chunk`s can be converted into `EmbeddedChunk`s (a `Chunk` plus a
-`vector: list[float]`) via
-`app.application.services.embed_chunks.EmbedChunksService`, which
-delegates the actual vectorization to an injected
-`app.domain.ports.embedder.Embedder` implementation
-(`embed(texts: list[str]) -> list[list[float]]`). Empty input returns
-an empty list without calling the embedder, and mismatched vector
-counts or dimensions raise a domain-level `EmbeddingError` instead of
-producing corrupted data.
-
-By default the FastAPI app uses
-`app.infrastructure.embedding.fake_embedder.FakeEmbedder`, a
-deterministic, dependency-free stand-in with no network access. Setting
-`MEDICAL_RAG_EMBEDDING_PROVIDER=sentence_transformers` switches to
-`app.infrastructure.embedding.sentence_transformer_embedder.SentenceTransformerEmbedder`,
-which runs a local, multilingual `sentence-transformers` model
-(`MEDICAL_RAG_EMBEDDING_MODEL_NAME`, default
-`intfloat/multilingual-e5-base`, downloaded on first use). That model
-family is asymmetric - it needs a `"query: "` prefix for search queries
-and a `"passage: "` prefix for indexed text - so the API layer actually
-constructs two `Embedder`s sharing one loaded model
-(`get_passage_embedder`/`get_query_embedder` in
-`app/api/dependencies.py`), not one. See
-`docs/adr/0005-embedding-strategy.md` for the original abstraction
-decision and `docs/adr/0011-real-embedding-and-llm-adapters.md` for the
-concrete adapter and provider-switching design.
-
-## Vector store
-
-`EmbeddedChunk`s can be stored and searched by similarity through the
-`app.domain.ports.vector_store.VectorStore` Protocol
-(`upsert(chunks: list[EmbeddedChunk]) -> None`,
-`search(query_vector: list[float], top_k: int) -> list[SearchResult]`),
-via `app.application.services.index_chunks.IndexChunksService` and
-`app.application.services.search_chunks.SearchChunksService`. A
-`SearchResult` pairs an `EmbeddedChunk` with a `score: float`, where a
-higher score always means a closer match regardless of which
-`VectorStore` implementation produced it; converting a concrete
-backend's native distance metric into that convention is the
-implementation's responsibility. `Chunk` exposes a computed `chunk_id`
-property (`document_id:page_number:chunk_index`) used as a stable
-identifier for upsert/deduplication.
-
-Two `VectorStore` implementations exist, selected via
-`Settings.vector_store_provider` (`app/api/dependencies.py::get_vector_store`):
-
-- `"memory"` (default) - `app.infrastructure.vector_store.in_memory_vector_store.InMemoryVectorStore`,
-  a deterministic, dependency-free implementation used both by tests
-  and as the FastAPI app's default dependency wiring. Its data does not
-  survive a process restart.
-- `"qdrant"` - `app.infrastructure.vector_store.qdrant_vector_store.QdrantVectorStore`,
-  backed by Qdrant's embedded/local mode (`qdrant_client.QdrantClient(path=...)`)
-  - no separate Qdrant server process, no network. Data persists under
-  `MEDICAL_RAG_VECTOR_STORE_PATH` (default `./qdrant_storage`, already
-  gitignored) across restarts. See "Persistent vector store" below and
-  `docs/adr/0026-persistent-vector-store.md` for the full reasoning,
-  including point ID derivation, dimension-mismatch detection across a
-  restart, and `--rebuild`.
-
-See `docs/adr/0006-vector-store-strategy.md` for the shared reasoning
-behind the `VectorStore` Protocol itself, including why `upsert` (not
-`add`) was chosen and the `score` convention both implementations
-follow.
-
-### Persistent vector store
-
-Set `MEDICAL_RAG_VECTOR_STORE_PROVIDER=qdrant` (see `.env.example`) to
-persist indexed chunks under `MEDICAL_RAG_VECTOR_STORE_PATH` instead of
-losing them on every restart. `POST /documents/index` works unchanged
-against either provider.
-
-To bulk-index local PDFs into the persistent store from the command
-line (rather than one file at a time via the API), use
-`scripts/index_documents.py`:
+- **pytest**: 501件のテストを収集（unit / integration / api の3層）。LLM呼び出しは
+  ユニットテストでは原則モック化し、実際のOpenAI API・sentence-transformersモデルを使う
+  テストは`RUN_SLOW_TESTS=1`指定時のみ実行するopt-in方式（CIでは常にスキップ）
+- **Ruff**: lintとフォーマットチェック
+- **mypy**: 型チェック（`disallow_untyped_defs`等、厳格めの設定）
+- **GitHub Actions CI**: `main`へのpush・PR全件に対して lint → format → typecheck → test を
+  自動実行。すべて通過したPRのみdeployジョブに進む構成
 
 ```bash
-# Index every *.pdf under data/raw/ (default), reusing the existing
-# persistent index (re-indexing the same file updates it in place).
-uv run python -m scripts.index_documents
-
-# Index specific files instead.
-uv run python -m scripts.index_documents data/raw/guideline_a.pdf
-
-# Discard the existing persistent index first, then index from scratch -
-# e.g. after changing embedding_provider/embedding_model_name, since old
-# and new vectors would otherwise have incompatible dimensions.
-uv run python -m scripts.index_documents --rebuild
+make check   # lint + typecheck + test をまとめて実行
 ```
 
-This script requires `MEDICAL_RAG_VECTOR_STORE_PROVIDER=qdrant` (it
-refuses to run under `"memory"`, since anything it indexed would be
-discarded the instant the one-shot process exits). Only one process may
-hold `MEDICAL_RAG_VECTOR_STORE_PATH` open at a time - run this script
-before starting (or after stopping) the FastAPI app if they would
-otherwise point at the same path.
-
-`MEDICAL_RAG_VECTOR_STORE_PATH` must never be committed and must be
-dedicated to this one collection (`--rebuild` deletes the entire
-directory, not just one collection's data) - see
-`docs/adr/0026-persistent-vector-store.md`.
-
-## Indexing pipeline
-
-`app.application.services.index_document.IndexDocumentService` indexes
-one PDF end to end by composing `LoadDocumentService`,
-`ChunkDocumentService`, `EmbedChunksService`, and `IndexChunksService`
-in sequence, returning an `IndexDocumentResult` (`document_id`,
-`source_name`, `page_count`, `chunk_count`, `indexed_count`).
-`document_id` is `None` for a zero-page PDF, since no `DocumentPage` is
-produced in that case. Re-indexing the same PDF does not create
-duplicate `VectorStore` entries, since it relies on the existing
-`chunk_id`-based upsert idempotency
-(`docs/adr/0006-vector-store-strategy.md`). Exceptions raised by any
-step (document loading, chunking, embedding, storage) are not caught
-and propagate to the caller unchanged. See
-`docs/adr/0007-indexing-pipeline.md` for the reasoning.
-
-This issue only builds the Application-layer pipeline and its tests;
-there is no concrete embedding model or vector database adapter yet
-(the API layer wires it to Fake implementations - see [API](#api)
-below).
-
-## Retrieval
-
-`app.application.services.retrieve_chunks.RetrieveChunksService` takes
-a natural-language query string and `top_k`, embeds the query via an
-injected `Embedder`, and delegates the similarity search to an
-injected `app.application.services.search_chunks.SearchChunksService`.
-`top_k` and an empty/whitespace-only query are rejected before the
-`Embedder` is called; a mismatch between the number of vectors the
-`Embedder` returns and the single query it was given raises the
-existing `EmbeddingCountMismatchError`. No new result model is
-introduced: the return value is `list[SearchResult]`, the same type
-`VectorStore.search`/`SearchChunksService.execute` already return.
-Exceptions from the `Embedder` or `SearchChunksService` are not caught
-and propagate to the caller unchanged. Logging includes only `top_k`
-and the returned result count, never query text or vector values. See
-`docs/adr/0008-retrieval-strategy.md` for the reasoning.
-
-This issue only builds the Application-layer use case and its tests;
-there is no concrete embedding model or vector database adapter yet
-(see [API](#api) below for how it is exposed over HTTP today).
-
-## Generation
-
-`app.application.services.generate_answer.GenerateAnswerService` takes
-a question and an already-retrieved `list[SearchResult]` (from
-`RetrieveChunksService`) and generates a citation-grounded answer by
-delegating to an injected `app.domain.ports.llm.Llm`
-(`generate(prompt: str) -> str`). An empty/whitespace-only question is
-rejected before the `Llm` is called. When `search_results` is empty,
-the `Llm` is never called at all: a fixed insufficient-evidence answer
-is returned instead, so the system can never invent an answer when no
-guideline evidence was retrieved. `GenerationResult` (`answer`,
-`citations: list[SearchResult]`, `is_insufficient_evidence`) reuses
-`SearchResult` rather than introducing a separate citation model.
-Logging includes only the citation count and the insufficient-evidence
-outcome, never question text, guideline passage text, or the generated
-answer text. See `docs/adr/0009-generation-strategy.md` for the
-reasoning, including the current limitation that citations only carry
-title/source name and page number (not edition/chapter/section, which
-`Chunk` does not yet model).
-
-The prompt instructs the `Llm` to answer only from the numbered
-passages, to treat those passages as reference material rather than
-instructions (so text inside a retrieved guideline can never redirect
-the model's behavior), to never provide a medical diagnosis or a final
-treatment decision, and to answer in Japanese. Before building the
-prompt, `select_chunks_within_budget()` keeps only as many
-highest-scoring passages as fit within
-`MEDICAL_RAG_LLM_CONTEXT_MAX_CHARS` (default 6000 characters - a plain
-character count, not a token count), never truncating a kept passage's
-own text and always keeping at least the first passage even if it alone
-exceeds the budget. `citations` reflects exactly this (possibly
-narrowed) set - a passage dropped for length is never cited, since the
-`Llm` never saw it. See
-`docs/adr/0022-context-length-control-and-llm-error-handling.md` for
-the full design.
-
-Any exception from the injected `Llm` still propagates out of
-`GenerateAnswerService` unchanged (fail-fast, per
-`docs/adr/0009-generation-strategy.md`); `OpenAiLlm` itself translates
-any exception raised by the OpenAI client into
-`app.domain.exceptions.llm.LlmGenerationError` (never the raw SDK
-exception, and never including the API key or other request detail),
-which `POST /questions/ask` maps to HTTP 502.
-
-By default the FastAPI app uses `app.infrastructure.llm.fake_llm.FakeLlm`,
-a deterministic, dependency-free stand-in with no network access.
-Setting `MEDICAL_RAG_LLM_PROVIDER=openai` (plus a real
-`MEDICAL_RAG_LLM_API_KEY`) switches to
-`app.infrastructure.llm.openai_llm.OpenAiLlm`, which sends the composed
-prompt as a single user message to OpenAI's Chat Completions API
-(`MEDICAL_RAG_LLM_MODEL_NAME`, default `gpt-4o-mini`). `llm_api_key` is
-a `pydantic.SecretStr`, so it never appears in logs even if the whole
-`Settings` object is accidentally printed. See
-`docs/adr/0011-real-embedding-and-llm-adapters.md` for the adapter and
-provider-switching design.
-
-## API
-
-Two endpoints expose the services above over HTTP, prefixed with
-`Settings.api_v1_prefix` (default `/api/v1`):
-
-- **`POST /documents/index`** - `multipart/form-data` upload of a
-  single PDF (`file`). Rejects a non-`.pdf` file name (415) and an
-  empty file (400). The upload is saved under a sanitized version of
-  its own name inside a freshly-created, randomly-named temp
-  directory - never under the raw uploaded name directly, and never in
-  a predictable location - and the whole directory is always removed
-  afterward, whether indexing succeeds or fails. Returns 201 with an
-  `IndexDocumentResponse` (`document_id`, `source_name`, `page_count`,
-  `chunk_count`, `indexed_count`) on success; an encrypted or
-  unparseable PDF returns 422.
-- **`POST /questions/ask`** - JSON body (`question`, `top_k`, default
-  5). Composes `RetrieveChunksService` and `GenerateAnswerService` via
-  the new `app.application.services.ask_question.AskQuestionService`.
-  Returns 200 with an `AskQuestionResponse` (`answer`,
-  `citations: list[CitationSchema]`, `is_insufficient_evidence`) -
-  including when no evidence was retrieved, which is a normal result,
-  not an error. An empty/whitespace-only question or non-positive
-  `top_k` returns 400/422. A failure from the configured `Llm` (e.g. the
-  OpenAI API) returns 502.
-
-`app/api/dependencies.py` is the only module that constructs
-Infrastructure implementations (Fake or real, depending on
-`Settings.embedding_provider`/`llm_provider` - see
-[Embedding](#embedding) and [Generation](#generation) above) and wires
-them into Application services; endpoint modules never import
-Infrastructure directly. `get_passage_embedder`/`get_query_embedder`/
-`get_vector_store`/`get_llm` are process-wide singletons, so a document
-indexed via `POST /documents/index` is searchable via
-`POST /questions/ask` for the life of the running process. Neither
-endpoint logs question text, guideline passage text, generated answer
-text, or embedding vectors - only counts, file names, and outcome flags.
-
-`InMemoryVectorStore` remains the default `VectorStore` (data is lost
-on restart); set `MEDICAL_RAG_VECTOR_STORE_PROVIDER=qdrant` for a
-persistent, on-disk alternative that survives a restart - see
-"Persistent vector store" above. Swagger UI at `/docs` can exercise
-both endpoints directly, including file upload, regardless of which
-providers are configured.
-
-## Streamlit demo UI
-
-`app/ui/streamlit_app.py` is a minimal Streamlit UI for
-`POST /questions/ask`, for trying the question-answering flow without
-Swagger UI. It is presentation-only: it never imports Application/
-Domain/Infrastructure code or calls OpenAI directly, and instead
-speaks HTTP to an already-running API server via
-`app.ui.api_client.QuestionApiClient`. See
-`docs/adr/0024-streamlit-demo-ui.md` for the full design reasoning,
-including why this must be an HTTP client rather than a second
-in-process service graph (`InMemoryVectorStore` is process-wide - see
-[Vector store](#vector-store) - so the UI must query the same running
-API process that documents were indexed into, not build its own).
-
-The UI does **not** support uploading or indexing documents (out of
-scope for this issue); index a document first via
-`POST /documents/index` (Swagger UI or `curl`) against the same
-running API server the UI is pointed at.
-
-**1. Start the API server** (Fake providers work out of the box, no
-API key required):
-
-```bash
-make dev
-```
-
-**2. Index at least one document** via `http://127.0.0.1:8000/docs`
-(`POST /documents/index`) - any self-authored, non-confidential sample
-PDF (see `data/sample/README.md`).
-
-**3. In a second terminal, start the UI:**
-
-```bash
-make ui
-```
-
-Open the URL Streamlit prints (typically `http://localhost:8501`).
-`MEDICAL_RAG_UI_API_BASE_URL` (default `http://127.0.0.1:8000`, see
-`.env.example`) controls which API server the UI talks to; change it
-if the API runs on a different host or port.
-
-**4. Ask a question.** The UI always shows a fixed disclaimer that
-this is a demonstration, not medical advice, and that the original
-guideline and current clinical information should be checked. A
-generated answer is shown together with an expandable citations
-section (source, page number, chunk index, score, and a short text
-preview - never the full guideline text). When no relevant passage was
-retrieved, a dedicated Japanese "insufficient evidence" notice is
-shown instead of an answer. Connection failures, invalid input, and
-API/LLM errors are shown as short, safe Japanese messages
-(`app/ui/presentation.py::describe_error`) - never a stack trace, API
-key, prompt, or internal path.
-
-**Screenshot:** *(not included - add one here if useful, but only a
-self-authored, non-confidential sample document's output; never a
-screenshot containing real or copyrighted guideline text.)*
-
-## Live end-to-end verification (real Embedding + LLM)
-
-This confirms the full PDF-index -> chunk -> embed -> search -> answer
-flow with the real `sentence-transformers` embedder and the real
-OpenAI LLM, not the Fake stand-ins. See
-`docs/adr/0012-live-e2e-verification.md` for the design reasoning.
-
-**1. Required `.env` values** (no new settings beyond what
-[Embedding](#embedding)/[Generation](#generation) already document):
-
-```bash
-MEDICAL_RAG_EMBEDDING_PROVIDER=sentence_transformers
-MEDICAL_RAG_EMBEDDING_MODEL_NAME=intfloat/multilingual-e5-base
-MEDICAL_RAG_LLM_PROVIDER=openai
-MEDICAL_RAG_LLM_API_KEY=sk-...   # never commit a real key
-```
-
-Never commit `.env`, never paste a real API key into a commit, a log
-line, a test assertion, an exception message, or this README. `llm_api_key`
-is a `SecretStr` for exactly this reason (see [Generation](#generation)).
-
-**2. Model download and caching.** The first request that uses
-`sentence_transformers` downloads `intfloat/multilingual-e5-base`
-(a few hundred MB) into the standard Hugging Face cache
-(`~/.cache/huggingface`, or `%USERPROFILE%\.cache\huggingface` on
-Windows; override with the `HF_HOME` environment variable). This can
-take a few minutes on a slow connection; every request afterward
-(including later runs of the app or the live test) reuses the cached
-model and loads in a few seconds.
-
-**3. Query/passage prefixes.** `sentence-transformers` models in the
-`intfloat/multilingual-e5-*` family are asymmetric: the app already
-applies a `"passage: "` prefix when indexing and a `"query: "` prefix
-when searching (`get_passage_embedder`/`get_query_embedder` in
-`app/api/dependencies.py`). There is nothing to configure; this is
-confirmed functionally by the live test finding the right passage for
-a related question, not by inspecting raw vectors.
-
-**4. Vector dimension consistency.** `InMemoryVectorStore` records the
-dimension of the first vector it stores and rejects any later vector of
-a different size (`VectorDimensionMismatchError`). If you switch
-`MEDICAL_RAG_EMBEDDING_MODEL_NAME` to a model with a different
-dimension after already indexing documents, restart the app (or expect
-this error) rather than mixing vectors from two models in the same
-store.
-
-**5. Running the live test:**
-
-```bash
-# .env filled in as above (loaded automatically by tests/conftest.py), or:
-export MEDICAL_RAG_LLM_API_KEY=sk-...
-export RUN_SLOW_TESTS=1
-
-uv run pytest tests/integration/test_live_rag_e2e.py -v
-```
-
-`RUN_SLOW_TESTS=1` opts into the real model download/load;
-`MEDICAL_RAG_LLM_API_KEY` opts into the real, billable OpenAI call. The
-test is skipped unless **both** are present, and never runs as part of
-a plain `uv run pytest`. It generates its own self-authored, obviously
-fictional sample PDF (`tests/support/pdf_factory.build_pdf`) at run
-time - no PDF is committed to this repository - and asserts only on
-status codes, counts, and booleans (`chunk_count`, citation count,
-`page_number`, `is_insufficient_evidence`, and that `answer` is
-non-empty), never on API keys or exact document/answer text.
-
-**6. Manual verification via Swagger UI**, as an alternative to the
-live test:
-
-1. Fill in `.env` as in step 1, then `make dev`.
-2. Open `http://127.0.0.1:8000/docs`.
-3. `POST /documents/index` -> "Try it out" -> upload any self-authored,
-   non-confidential sample PDF (see `data/sample/README.md`; never a
-   real guideline or patient document).
-4. `POST /questions/ask` -> ask a question related to that PDF's
-   content -> check `answer`, `citations` (source name, page number,
-   score), and `is_insufficient_evidence` in the response.
-5. Restarting the server clears `InMemoryVectorStore`
-   ([Vector store](#vector-store)) - step 3 must be repeated after any
-   restart before step 4 will find anything.
-
-**7. Cost, timeout, and download time to expect:** a `gpt-4o-mini` call
-for a short prompt (a handful of retrieved passages plus a question)
-costs a small fraction of a cent; `MEDICAL_RAG_LLM_TIMEOUT_SECONDS`
-(default 30) bounds how long `OpenAiLlm` waits for a response. The
-`sentence-transformers` model download (step 2) is the slowest part of
-a first run and depends entirely on network speed.
-
-**8. Logging in error cases.** Both endpoints already log only counts,
-file names, and outcome flags, never question text, document text, or
-generated answer text ([API](#api)); this holds identically whether
-the Fake or the real providers are configured. An API key is never
-logged (`SecretStr`) and never appears in an `HTTPException` message
-raised by either endpoint.
-
-## Retrieval evaluation
-
-`tests/integration/test_retrieval_evaluation.py` measures retrieval
-quality only (never generation/LLM output, per `docs/requirements.md`'s
-"separate retrieval quality from generation quality") using two
-standard metrics computed in `tests/support/evaluation/metrics.py`:
-**Recall@k** (does a relevant chunk appear anywhere in the top k
-results?) and **MRR** (how high does the first relevant chunk rank,
-averaged over all questions?). It indexes a fixed, self-authored,
-fictional evaluation dataset
-(`tests/support/evaluation/qa_dataset.py`: eight short sentences about
-a made-up drug, each paired with a question and its expected page
-number) with the real `sentence-transformers` embedder, then asserts
-`Recall@3`/`MRR` clear provisional thresholds
-(`MIN_RECALL_AT_3`/`MIN_MRR` in the test file) calibrated against that
-dataset. See `docs/adr/0013-retrieval-evaluation.md` for the full
-design reasoning.
-
-Like the live tests above, it downloads a real model and is skipped
-unless `RUN_SLOW_TESTS=1` is set - no OpenAI API key is needed, since
-no `Llm` is involved:
-
-```bash
-RUN_SLOW_TESTS=1 uv run pytest tests/integration/test_retrieval_evaluation.py -v -s
-```
-
-`-s` prints a per-case report (Recall@k, reciprocal rank, expected vs.
-actual page numbers for every question) alongside the pass/fail
-result, which is what you need to recalibrate
-`MIN_RECALL_AT_3`/`MIN_MRR` after growing `EVALUATION_CASES`.
-
-## Real-data retrieval baseline
-
-`scripts/evaluate_retrieval_baseline.py` measures Recall@1/Recall@3/
-Recall@5/MRR of the current retrieval configuration against a real
-guideline document kept entirely on your own machine - a one-off
-baseline measurement, not a CI gate, and not an improvement (Issue
-#18 is measurement only). The real PDF, the dataset of questions and
-expected pages/chunks, and any per-question results are **never
-committed**: `data/eval/` (alongside the existing `data/raw/`) is
-gitignored for exactly this reason. Only the measurement tool itself,
-the dataset format (`docs/evaluation-dataset-format.md`, fictional
-examples only), and a place to record **aggregate** numbers
-(`docs/baseline-retrieval-evaluation.md`, document titles anonymized)
-are committed. See `docs/adr/0014-real-data-retrieval-baseline.md`
-for the full design reasoning.
-
-```bash
-# .env: MEDICAL_RAG_EMBEDDING_PROVIDER=sentence_transformers
-uv run python -m scripts.evaluate_retrieval_baseline \
-  --dataset data/eval/my_guideline_qa.json --save-report
-```
-
-The script prints a per-question breakdown (local use only), an
-aggregate summary, and a ready-to-review Markdown snippet for
-`docs/baseline-retrieval-evaluation.md` - review it for anything
-identifying before pasting it anywhere committed.
-
-## Chunk size comparison
-
-`scripts/compare_chunk_sizes.py` extends the same idea to compare
-Recall@1/Recall@3/Recall@5/MRR across several `chunk_size` values
-(default `300,500,700,1000,1500`) against the same real, local
-dataset - `chunk_overlap`, `top_k`, and the embedding model are held
-fixed. It shares its core index-and-evaluate logic with
-`scripts/evaluate_retrieval_baseline.py` via
-`scripts/retrieval_baseline_core.py`, but always uses an explicit,
-CLI-specified configuration rather than reading `chunk_size` from
-`.env` - this is a comparison measurement, not a change to any
-default. As with the baseline tool, the real PDF, dataset, and
-per-question results are **never committed**; only the tool and a
-place to record **aggregate** comparison results
-(`docs/chunk-size-comparison.md`, document titles anonymized) are. See
-`docs/adr/0015-chunk-size-comparison.md` for the full design
-reasoning.
-
-```bash
-uv run python -m scripts.compare_chunk_sizes \
-  --dataset data/eval/my_guideline_qa.json --save-report
-```
-
-Prints a comparison table (aggregate only, by default) and a
-ready-to-review Markdown table for `docs/chunk-size-comparison.md`.
-Pass `--verbose` to also print each candidate's per-question
-breakdown (local use only).
-
-## PDF extraction comparison
-
-`scripts/compare_pdf_extractors.py` compares PDF text-extraction
-strategies (`pypdf`, PyMuPDF) against the same real, local dataset:
-for each extractor, it measures extraction-quality statistics (page/
-character counts, a comparison-only garbled-text heuristic - see
-`docs/adr/0017-pdf-extraction-comparison-tooling.md` for what it does
-and does not detect) alongside Recall@1/Recall@3/Recall@5/MRR under a
-fixed configuration (`chunk_size=1000`, `chunk_overlap=200`,
-`top_k=5`, `intfloat/multilingual-e5-base`). It reuses
-`scripts/retrieval_baseline_core.py`'s retrieval evaluation, injecting
-each extractor's already-extracted pages. This tool always compares
-both extractors' output directly, independent of which one is
-currently configured as the production default via
-`MEDICAL_RAG_PDF_EXTRACTOR` (see [PDF loading](#pdf-loading) above -
-PyMuPDF is the default since
-`docs/adr/0018-adopt-pymupdf-for-production-pdf-extraction.md`, with
-`pypdf` kept for rollback and future comparisons). As with
-the other tools above, the real PDF, dataset, and per-question results
-are **never committed**; only the tool and a place to record
-**aggregate** comparison results
-(`docs/pdf-extraction-comparison-results.md`, document titles
-anonymized) are. See
-`docs/adr/0016-retrieval-quality-diagnosis.md`/
-`docs/adr/0017-pdf-extraction-comparison-tooling.md` for the full
-design reasoning.
-
-```bash
-uv run python -m scripts.compare_pdf_extractors \
-  --dataset data/eval/my_guideline_qa.json --save-report
-```
-
-Prints a comparison table (aggregate only, by default) and a
-ready-to-review Markdown table for
-`docs/pdf-extraction-comparison-results.md`. Pass `--verbose` to also
-print each extractor's per-question breakdown (local use only).
-
-## Table-aware chunking comparison
-
-`scripts/compare_chunking_strategies.py` compared the existing
-fixed-size chunker against a rule-based table-aware chunker
-(`scripts/table_aware_chunking.py`) under a fixed `hybrid_rerank`
-retrieval configuration. On a real guideline PDF it underperformed the
-existing chunker on Recall@1/Recall@3/Recall@5/MRR, and its latency
-improvement was too small to offset that regression - **it was
-compared but is not adopted**. Production chunking remains
-`FixedSizeTextSplitter`. See
-`docs/adr/0021-table-aware-chunking-comparison.md` and
-`docs/table-aware-chunking-comparison-results.md` for the full design
-and recorded results.
-
-## Answer quality and citation consistency evaluation
-
-`scripts/evaluate_answer_quality.py` measures whether generated answers
-are grounded in retrieved passages and whether returned citations are
-consistent with the evidence, using deterministic metrics only (no
-LLM-as-a-Judge): citation precision/recall against a dataset's expected
-pages, insufficient-evidence accuracy, a lexical (substring-match)
-answer-point coverage score, and a citation-consistency check
-(`citations_are_subset_of_retrieved()` - expected to always pass, since
-`GenerateAnswerService` already guarantees this by construction; the
-check exists as a regression safety net). Runs with a `FakeLlm` by
-default (no API key/network required); pass `--llm openai` to measure
-against a real, billable OpenAI call instead. Extends the same local,
-gitignored dataset format as the retrieval-evaluation tools above with
-two optional fields, `expected_answer_points` and
-`expected_insufficient_evidence` - see
-`docs/evaluation-dataset-format.md`. See
-`docs/adr/0023-answer-quality-and-citation-consistency-evaluation.md`
-for the full design reasoning, including why this is deterministic
-rather than LLM-judged and why the evaluation-agnostic dataset-loading
-code was factored out into `scripts/evaluation_common.py` for reuse by
-future evaluation tools.
-
-```bash
-# Default: FakeLlm, no API key or network needed.
-uv run python -m scripts.evaluate_answer_quality \
-  --dataset data/eval/my_guideline_qa.json --save-report
-
-# Opt-in: measure against the real OpenAI API (billable, network required).
-uv run python -m scripts.evaluate_answer_quality \
-  --dataset data/eval/my_guideline_qa.json --llm openai
-```
-
-A CI-reproducible, deterministic (`FakeLlm`-based) correctness test for
-the evaluation logic itself lives in
-`tests/unit/test_answer_quality_core.py` (always runs, no external
-service). An opt-in test against the real OpenAI API and a real
-`sentence-transformers` model lives in
-`tests/integration/test_live_answer_quality_evaluation.py` (skipped
-unless `RUN_SLOW_TESTS=1` and a real `MEDICAL_RAG_LLM_API_KEY` are set).
-
-## Evaluation dashboard
-
-`app/ui/evaluation_dashboard.py` is a developer-only Streamlit
-dashboard for inspecting the local, gitignored JSON reports produced
-by `scripts/evaluate_answer_quality.py --save-report` (see
-[Answer quality and citation consistency evaluation](#answer-quality-and-citation-consistency-evaluation)
-above) - without re-running any evaluation. It never constructs an
-`Embedder`, `Llm`, or `VectorStore`, and must never be deployed
-alongside the production API. See
-`docs/adr/0025-evaluation-dashboard.md` for the full design.
-
-```bash
-uv run streamlit run app/ui/evaluation_dashboard.py
-```
-
-Point it at a reports directory (default `data/eval/results/`) in the
-sidebar. It shows, per selected report: overall metrics (citation
-precision/recall, answer-point coverage, insufficient-evidence
-accuracy, mean latency, citation-consistency violations), a filterable
-per-question table (failures-only, and by the dataset's optional
-`category`/`difficulty` metadata - see
-[Dashboard filter metadata](docs/evaluation-dataset-format.md#dashboard-filter-metadata-optional-issue-15)),
-and a failure-analysis view reusing the exact same failure criteria as
-`scripts/answer_quality_core.py::print_failure_analysis`. A comparison
-tab shows two reports' aggregate metrics side by side, flagging each as
-improved/degraded/unchanged.
-
-`data/eval/results/` is also used by other `scripts/*_core.py` tools
-(retrieval-only, chunk-size, PDF-extraction, and reranking comparison
-reports); the dashboard silently skips any file there that is not
-shaped like an answer-quality report rather than mis-parsing it (see
-`scripts/evaluation_report_loader.py`).
-
-## Project layout
-
-See `docs/architecture.md` for the layered architecture and
-`CLAUDE.md` for the full set of project rules.
-
-```
-app/            # application source (api, application, domain, infrastructure, core, schemas)
-tests/          # unit, integration, api tests
-docs/           # requirements, architecture, ADRs
-scripts/        # development and operational scripts
-data/           # raw, processed, and sample guideline data (see data/sample/README.md)
-```
-
-## License
-
-[MIT](LICENSE).
+## セキュリティ設計
+
+- **秘密情報の取り扱い**: LLM APIキーは`pydantic.SecretStr`で保持し、`Settings`オブジェクトを
+  誤って出力してもログに漏れない設計。質問文・パッセージ本文・生成回答本文はいずれのログにも
+  一切出力せず、件数や真偽フラグのみ記録
+- **アップロード処理**: PDFファイル名はサニタイズした上で、都度ランダム生成した一時ディレクトリに
+  保存し、成功・失敗に関わらず処理後に必ず削除
+- **IAM最小権限**: ECSタスク実行ロールは指定した1つのSecrets Manager シークレットの読み取りのみ、
+  appタスクロールは対象S3バケットとEFS Access Point（ARN指定）のみに権限を限定、
+  uiタスクロールには追加権限を一切付与しない
+- **ネットワーク分離**: ALBのみが外部公開（80番）。app（8000番）・ui（8501番）はALBの
+  セキュリティグループからの通信のみ許可。EFS（2049番）はappタスクのセキュリティグループ
+  からのみ許可。ECS Fargateタスクはパブリックサブネットに配置されるが、セキュリティグループが
+  実質的な唯一の防御層として機能
+- **S3**: パブリックアクセスを完全ブロック（ACL・ポリシーとも）
+- **GitHub Actions**: 長期のAWSアクセスキーをGitHub Secretsに保存せず、OIDC連携で
+  `main`ブランチからのpushに限定した一時クレデンシャルを使用
+- **Secrets Manager**: Terraformはプレースホルダー値のみを作成し、実キーはコード経由では
+  一切扱わない設計（`lifecycle.ignore_changes`で手動設定値の上書きも防止）
+
+## コスト設計
+
+継続稼働させた場合、月額約**$40〜70**が目安です（トラフィックゼロでも発生）。
+
+| リソース | 課金要因 |
+|---|---|
+| ECS Fargate | app（0.5vCPU/1GB）+ ui（0.25vCPU/0.5GB）の稼働時間課金 |
+| ALB | 固定時間課金 + LCU従量課金（停止機能がなく、destroyするまで課金継続） |
+| EFS | ストレージ容量課金 |
+| CloudWatch | Logs保存・Dashboard・Alarm |
+| S3 | ストレージ・リクエスト課金 |
+| ECR | イメージストレージ課金 |
+| Secrets Manager | シークレット1件あたりの月額固定費 |
+
+**コストを抑える設計判断**:
+
+- NAT Gatewayを意図的に不使用（月$32〜70の固定費を回避、代わりにセキュリティグループで
+  ネットワーク分離）
+- ECRライフサイクルポリシーで未タグイメージを7日後に自動失効
+- S3ライフサイクルで非現行バージョンを90日後に自動失効
+- HTTPS/ACM/Route53は未構成（ドメイン未取得のため、必要になった時点で追加する設計）
+
+本プロジェクトでは、[デモ・動作確認](#デモ動作確認)の実機検証後に`terraform destroy`まで
+実施し、継続課金が発生しない状態を確認済みです。
+
+## 工夫した点
+
+- **Clean Architecture + DDDの徹底**: API/Application/Domain/Infrastructureの依存方向を
+  厳密に守り、Domain層はFastAPI・LangChain・Qdrant・AWS SDK等いかなるフレームワークにも
+  依存しない設計。すべての主要判断を29件のADRとして記録し、後から意思決定の理由を追跡可能に
+- **Fail-fast設計**: 各Application Serviceは例外を握りつぶさず、ドメイン固有の例外
+  （`EmbeddingError`, `VectorStoreError`等）として上位に伝播させ、API層で適切なHTTP
+  ステータスに変換
+- **Provider切り替え可能な設計**: Embedding/LLM/VectorStore/Storageをすべて環境変数で
+  Fake実装と実実装に切り替え可能にし、APIキーやネットワークなしでの開発・CI実行と、
+  本番相当の実行を同じコードベースで両立
+- **文字数予算を考慮したプロンプト構築**: `MEDICAL_RAG_LLM_CONTEXT_MAX_CHARS`の範囲内で
+  スコア上位のパッセージのみを採用し、採用されなかったパッセージは引用にも含めない
+  （見せていない根拠を引用したことにしない）設計
+- **Embedded QdrantをEFSに配置**: 別途Qdrantサーバーを運用せず、embedded/localモードを
+  EFS上に永続化することでインフラをシンプルに保持
+- **GitHub Actions OIDC連携**: 長期のAWSアクセスキーを一切保存せず、ワークフロー実行時に
+  一時クレデンシラルを取得する構成でCI/CDのセキュリティを確保
+- **比較実験を本番コードから完全分離**: Hybrid Search・Cross-Encoderリランキング・
+  表構造対応チャンキングの比較実装はすべて`scripts/`配下に閉じ込め、`app/domain`・
+  `app/application`・`app/infrastructure`・`app/api/dependencies.py`には一切手を加えない
+  方針を徹底（本番の振る舞いへの影響ゼロを保証）
+
+## 苦労した点と解決方法
+
+- **Embedded Qdrantの単一プロセス制約**: embedded/localモードのQdrantは1プロセスしか
+  同じパスを開けないため、ECSの標準的なローリングデプロイ（新旧タスクが一時的に共存）では
+  衝突する。→ appサービスのみ`deployment_minimum_healthy_percent=0`の「Recreate」方式を
+  採用し、旧タスクを完全停止してから新タスクを起動する設計に変更（意図的な短時間停止を許容）
+- **日本語ガイドラインのPDF抽出品質**: `pypdf`では文字化け・欠損が多く見られたため、
+  `PyMuPDF`と比較評価。Recall/MRRが明確に向上したためPyMuPDFを採用（ただしAGPL-3.0/
+  商用デュアルライセンスである点は商用利用前に要解決の課題として記録）
+- **ECS/ALB作成前にイメージが存在しない問題**: `terraform apply`はECSサービスまで作成するが、
+  ECRリポジトリは空の状態で始まるため、初回はタスク起動に失敗する。→ GitHub Actionsの
+  デプロイジョブで解決する手順と、手動でイメージをpushする代替手順の両方を用意
+- **`terraform destroy`がECRリポジトリで失敗**: 検証後の削除時、ECRリポジトリにイメージが
+  残っていたため`force_delete`未設定のTerraformコードでは削除できずエラーになった。
+  → Terraformコードは変更せず、`aws ecr batch-delete-image`でイメージを先に削除してから
+  `terraform destroy`を再実行し、全リソースの削除に成功
+- **Windows（Git Bash）でのAWS CLI実行時のパス変換問題**: `/ecs/...`のようにスラッシュで
+  始まる引数をAWS CLIに渡すと、Git BashがPOSIXパスとして誤変換してしまう事象が発生。
+  → `MSYS_NO_PATHCONV=1`を指定することで回避
+
+## 評価方法
+
+- **検索精度**: Recall@k（正解チャンクがTop-k内に含まれるか）とMRR（最初の正解チャンクの
+  順位の逆数の平均）を`tests/support/evaluation/metrics.py`で自前実装し測定
+- **回答品質**: LLM-as-a-Judgeは使わず、決定論的な指標のみで評価 — 引用の精度/再現率、
+  根拠不十分判定の正確さ、字句一致ベースの回答網羅率、引用一貫性チェック
+  （生成された引用が実際に検索結果の部分集合になっているか）
+- **CIで常時実行される評価**: 自己作成の合成データセット（架空の薬剤に関する短い文章8件）を
+  使い、`RUN_SLOW_TESTS=1`指定時にRecall@3/MRRのしきい値を検証するテストとして常設
+- **実データでの比較実験ツール**（ローカル限定、実ガイドラインPDF・データセットは
+  一切コミットしない設計）:
+  - チャンクサイズ比較（`scripts/compare_chunk_sizes.py`）
+  - PDF抽出器比較（pypdf vs PyMuPDF、`scripts/compare_pdf_extractors.py`）
+  - Hybrid Search比較（Dense単独 vs Dense+BM25、`scripts/compare_retrieval_strategies.py`）
+  - Cross-Encoderリランキング比較（`scripts/compare_reranking_strategies.py`）
+  - 表構造対応チャンキング比較（`scripts/compare_chunking_strategies.py`）
+
+**正直な補足**: 上記5つの比較ツールのうち、実際に数値を記録済みなのは**表構造対応チャンキング
+比較の1件のみ**です（2026-08-04実施、既存の固定長チャンキングが優位という結論で不採用）。
+他4件（チャンクサイズ、PDF抽出器、Hybrid Search、Cross-Encoderリランキング）は、ツール自体は
+実装・テスト済み（`tests/unit/`に単体テストあり）で実データに対して即座に実行可能な状態ですが、
+結果ドキュメント（`docs/*.md`）はまだ空のテンプレートのままです。ツールの実装・テストと、
+実データでの計測実施は明確に区別しています。
+
+## 制約・免責事項
+
+- 本プロジェクトは技術デモンストレーションです。医療診断・個別患者への治療判断・患者固有の
+  推奨は一切行いません。実際の臨床判断の際は、必ず元のガイドラインおよび最新の臨床情報を
+  ご確認ください
+- 実患者情報は一切扱いません（ソースコード・テスト・ログ・サンプルデータのいずれにも保存しない）
+- PDF抽出に採用している`PyMuPDF`はAGPL-3.0/商用デュアルライセンスです。商用・公開デプロイ前に
+  ライセンス条件の解決が必要です（`docs/adr/0018-adopt-pymupdf-for-production-pdf-extraction.md`
+  参照）
+- スキャンPDF（画像のみ、テキストレイヤーなし）・暗号化PDFはいずれの抽出器でも非対応です
+- AWS環境は[デモ・動作確認](#デモ動作確認)で実機検証した後に`terraform destroy`済みです。
+  現在AWS上に稼働中の環境はありません
+- ALBはHTTPのみで、HTTPS・独自ドメイン・ACM証明書・Route53は未構成です
+
+## 今後の改善
+
+- Hybrid Searchのスコア融合方式としてReciprocal Rank Fusion（RRF）を追加実装
+- Dense検索の結果のみをCross-Encoderでリランキングする`dense_rerank`戦略の追加
+- 日本語トークナイザーをJanome等の形態素解析ベースに置き換え検討（Hybrid Searchを本番採用する場合）
+- 独自ドメイン取得後のHTTPS対応（ACM証明書 + Route53）
+- 環境別（Local/Test/Staging/Production）への`Settings`分割
+- CloudWatch AlarmへのSNS通知連携の追加
+- Hybrid Search比較における質問タイプ別（数値/略語/固有名詞等）分析の実装
+
+## ライセンス
+
+[MIT](LICENSE)
 
 ## Author
 
 ToruCode
 
-Clinical Engineer (10 years)
+Clinical Engineer（10年）
 
 AI Engineer
 
 Medical AI / RAG / Machine Learning
+
+## このプロジェクトで得られたこと
+
+本プロジェクトを通じて、Dockerによるコンテナ化から、Terraformを用いたAWS ECS
+Fargate・ALB・CloudWatchを含むインフラ構築、ECRへのイメージpush、実機での動作検証、
+そしてterraform destroyによる後片付けまで、クラウドインフラを構築してから壊すまでの
+一連のライフサイクルを経験できました。単に動かすだけでなく、コストを残さず終わらせる
+ところまで一人称で確認できたことが大きな学びです。
