@@ -233,6 +233,12 @@ GHA -->|ecs update-service| ECSUi
 ECS Fargateタスクはパブリックサブネットに配置されますが、セキュリティグループにより
 ALB以外からの直接アクセスは遮断されています（詳細は[セキュリティ設計](#セキュリティ設計)）。
 
+上記Mermaid図の詳細版として、AWS公式アイコンを用いた構成図も用意しています。
+
+![AWS構成図](docs/images/aws-architecture.png)
+
+編集用ソース（draw.io形式）: [`docs/images/aws-architecture.drawio`](docs/images/aws-architecture.drawio)
+
 ## 技術スタック
 
 | カテゴリ | 技術 |
