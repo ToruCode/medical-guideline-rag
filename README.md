@@ -133,6 +133,24 @@ APIキー・ネットワーク接続なしで起動できる決定論的なFake�
 構成（Fargate・ALB・EFS等）のため、検証後は速やかに`terraform destroy`する運用としています。
 再現する場合は[AWSデプロイ手順の概要](#awsデプロイ手順の概要)を参照してください。
 
+### ローカルRAG検証の再現
+
+起動中のAPI（`make dev`等）に対して、PDFのインデックス登録から質問応答までを実際のHTTPリクエストで
+検証し、HTTPステータス・処理時間・引用ページ・スコア・回答文字数などをJSONで保存できます。
+
+```bash
+uv run python -m scripts.verify_live_rag \
+  --pdf data/raw/your_guideline.pdf \
+  --question "質問文" \
+  --save-report
+```
+
+`curl`やPowerShellで日本語を直接送信する場合に起きがちな文字化け・JSON解析エラーを避けるため、
+`httpx`（UTF-8で一貫してエンコードするHTTPクライアント）経由でリクエストを送信します。保存される
+レポート（`data/eval/results/`、gitignore対象）の出力形式サンプルは
+[`docs/examples/live_verification_sample.json`](docs/examples/live_verification_sample.json)
+（架空データ）を参照してください。
+
 ### スクリーンショットについて
 
 現時点でリポジトリ内にポートフォリオ掲載用のスクリーンショットは存在しません。追加する場合は
