@@ -12,3 +12,7 @@ terraform.tfvars
 
 # .terraform.lock.hcl is intentionally NOT ignored - it is committed
 # for reproducible provider versions, same as uv.lock at the repo root.
+
+# Local plan files - never committed, regenerate with `terraform plan`.
+tfplan*
+*.tfplan
