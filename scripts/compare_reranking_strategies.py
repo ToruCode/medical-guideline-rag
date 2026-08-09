@@ -86,7 +86,15 @@ DEFAULT_CHUNK_OVERLAP = 200
 DEFAULT_TOP_K = 5
 DEFAULT_DENSE_CANDIDATE_K = 20
 DEFAULT_BM25_CANDIDATE_K = 20
-DEFAULT_RERANKER_CANDIDATE_K = 20
+# 10, not 20: a candidate_k=5/10/20/30 sweep on a real 30-question
+# dataset found 10 to be the best accuracy/latency tradeoff - it is the
+# only tested value with a net Recall@5 improvement over candidate_k=5
+# (0.950 -> 0.967); 20/30 cost far more reranking latency while
+# introducing a new regression on a previously-correct question that
+# more than offsets the same gain 10 already achieves. See
+# docs/cross-encoder-reranker-comparison-results.md's
+# "reranker_candidate_k sweep" entry for the full comparison.
+DEFAULT_RERANKER_CANDIDATE_K = 10
 DEFAULT_ALPHA = 0.7
 DEFAULT_EMBEDDING_MODEL_NAME = "intfloat/multilingual-e5-base"
 DEFAULT_RERANKER_MODEL_NAME = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
