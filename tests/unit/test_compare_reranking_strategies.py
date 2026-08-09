@@ -34,7 +34,7 @@ def test_default_args(monkeypatch: pytest.MonkeyPatch) -> None:
     assert args.top_k == 5
     assert args.dense_candidate_k == 20
     assert args.bm25_candidate_k == 20
-    assert args.reranker_candidate_k == 20
+    assert args.reranker_candidate_k == 10
     assert args.alpha == 0.7
     assert args.reranker_model_name == "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
     assert args.device == "cpu"
