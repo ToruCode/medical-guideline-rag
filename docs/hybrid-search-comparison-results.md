@@ -31,4 +31,18 @@ below (most recent first).
 
 ---
 
-_(No comparison recorded yet.)_
+## Hybrid search comparison (2026-08-09)
+
+- Document: Guideline A
+- Cases: 30
+- chunk_size=1000, chunk_overlap=200, top_k=5
+- Embedding: sentence_transformers / intfloat/multilingual-e5-base
+  (query prefix: "query: ", passage prefix: "passage: ")
+- Note: this run uses a corrected evaluation dataset - see
+  `docs/cross-encoder-reranker-comparison-results.md`'s 2026-08-09 entry
+  for the gold-label correction this run also reflects.
+
+| strategy | alpha | Recall@1 | Recall@3 | Recall@5 | MRR@5 |
+|---|---:|---:|---:|---:|---:|
+| dense |  | 0.65 | 0.88 | 0.95 | 0.78 |
+| hybrid | 0.7 | 0.68 | 0.88 | 0.95 | 0.80 |
