@@ -1,0 +1,42 @@
+{
+  "_comment": "Fictional sample output of scripts/verify_live_rag.py --save-report, for README/documentation purposes only. The document, question, and answer text below are self-authored fiction (a made-up drug and guideline) - not derived from any real medical guideline. Never place a real --save-report output here; real reports belong under data/eval/results/, which is gitignored.",
+  "document_label": "sample_guideline",
+  "verified_at": "2026-08-06T12:00:00+09:00",
+  "environment": {
+    "embedding_provider": "sentence_transformers",
+    "embedding_model_name": "intfloat/multilingual-e5-base",
+    "llm_provider": "openai",
+    "llm_model_name": "gpt-4o-mini",
+    "vector_store_provider": "memory"
+  },
+  "requests": [
+    {
+      "endpoint": "POST /api/v1/documents/index",
+      "http_status": 201,
+      "elapsed_seconds": 18.42,
+      "response": {
+        "document_id": "0000000000000000000000000000000000000000000000000000000000000000",
+        "source_name": "sample_guideline.pdf",
+        "page_count": 3,
+        "chunk_count": 5,
+        "indexed_count": 5
+      }
+    },
+    {
+      "endpoint": "POST /api/v1/questions/ask",
+      "http_status": 200,
+      "elapsed_seconds": 4.87,
+      "question": "サンプル薬の推奨用量は？",
+      "top_k": 5,
+      "retrieved_chunk_count": 2,
+      "answer_char_count": 58,
+      "is_insufficient_evidence": false,
+      "citations": [
+        { "page_number": 1, "chunk_index": 0, "score": 0.91 },
+        { "page_number": 2, "chunk_index": 1, "score": 0.87 }
+      ],
+      "cited_pages": [1, 2],
+      "answer": "サンプル薬の推奨用量は成人1日あたり10mgです（架空のガイドラインによるサンプル回答）。"
+    }
+  ]
+}
