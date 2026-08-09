@@ -7,6 +7,7 @@ monkeypatched where needed, and constructing an OpenAI client (unlike
 calling it) performs no network I/O.
 """
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,34 @@ def test_get_query_embedder_returns_fake_embedder_by_default() -> None:
     embedder = dependencies.get_query_embedder()
 
     assert isinstance(embedder, FakeEmbedder)
+
+
+def test_providers_stay_fake_even_when_dotenv_style_env_vars_are_simulated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test for a real local .env (MEDICAL_RAG_EMBEDDING_PROVIDER=
+    sentence_transformers, MEDICAL_RAG_LLM_PROVIDER=openai, plus a real
+    MEDICAL_RAG_LLM_API_KEY) silently changing ordinary test behavior.
+
+    tests/conftest.py's autouse _isolate_provider_settings_from_dotenv
+    fixture strips these three variables before every test runs, so this
+    module's "...by_default" tests above must see the same fake/no-key
+    Settings defaults locally (with a real .env present) as in CI
+    (which never has a .env file at all). See
+    docs/adr/0030-isolate-pytest-provider-settings-from-dotenv.md.
+    """
+    assert "MEDICAL_RAG_EMBEDDING_PROVIDER" not in os.environ
+    assert "MEDICAL_RAG_LLM_PROVIDER" not in os.environ
+    assert "MEDICAL_RAG_LLM_API_KEY" not in os.environ
+
+    settings = get_settings()
+
+    assert settings.embedding_provider == "fake"
+    assert settings.llm_provider == "fake"
+    assert settings.llm_api_key is None
+    assert isinstance(dependencies.get_passage_embedder(), FakeEmbedder)
+    assert isinstance(dependencies.get_query_embedder(), FakeEmbedder)
+    assert isinstance(dependencies.get_llm(), FakeLlm)
 
 
 def test_passage_and_query_embedder_share_one_loaded_model_under_sentence_transformers(
