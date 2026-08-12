@@ -163,52 +163,17 @@ uv run python -m scripts.verify_live_rag \
 
 ## システム構成
 
-### RAGパイプライン全体
+本システムは、医療ガイドラインPDFを対象として、Embedding、Hybrid Search、CrossEncoder
+Reranking、LLMを組み合わせたRAG（Retrieval-Augmented Generation）システムです。
 
-```mermaid
-flowchart LR
+PDFから抽出・分割したテキストをEmbeddingし、Qdrantへ格納します。質問時にはDense Searchと
+BM25を組み合わせたHybrid Searchで候補文書を取得し、CrossEncoderによるRerankingを行った
+うえで、上位文書をLLMへ渡して回答を生成します。
 
-User([ユーザー])
-API[FastAPI]
-Ask[AskQuestionService]
-Retrieve[RetrieveChunksService]
-Generate[GenerateAnswerService]
-Embed[SentenceTransformer]
-Vector[(VectorStore)]
-LLM[OpenAI GPT-4o-mini]
-Answer([引用付き回答])
+また、30問の評価データセットを用いてRecall@1/3/5・MRRを計測し、検索方式やRerankerの
+候補件数などを比較・最適化しています（詳細は[評価方法](#評価方法)参照）。
 
-User --> API
-API --> Ask
-Ask --> Retrieve
-Ask --> Generate
-Retrieve --> Embed
-Retrieve --> Vector
-Generate --> LLM
-Vector --> Generate
-Generate --> Answer
-```
-
-### インデックス登録〜検索〜生成のデータフロー
-
-```mermaid
-flowchart TD
-
-A[PDFアップロード]
-A --> B[PDF Loader]
-B --> C[チャンク分割]
-C --> D[SentenceTransformerで埋め込み]
-D --> E[(VectorStore)]
-
-F[ユーザーの質問]
-F --> G[質問文の埋め込み]
-G --> H[類似度検索]
-E --> H
-H --> I[Top-kチャンク]
-I --> J[プロンプト構築]
-J --> K[GPT-4o-mini]
-K --> L[引用付き回答]
-```
+![医療ガイドラインRAGシステム フロー図](docs/images/rag-system-flow.png)
 
 ### AWSインフラ構成（実際にterraformで構築・検証した構成）
 
