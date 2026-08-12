@@ -591,3 +591,14 @@ Fargate・ALB・CloudWatchを含むインフラ構築、ECRへのイメージpus
 そしてterraform destroyによる後片付けまで、クラウドインフラを構築してから壊すまでの
 一連のライフサイクルを経験できました。単に動かすだけでなく、コストを残さず終わらせる
 ところまで一人称で確認できたことが大きな学びです。
+
+---
+
+## システムフロー
+
+医療ガイドラインPDFの取り込みから、Embedding・Hybrid Search・Reranking・LLMによる回答生成、
+さらに評価・改善およびAWS構成までの全体フローを以下に示します。
+
+![医療ガイドラインRAGシステム フロー図](docs/images/rag-system-flow.png)
+
+---
